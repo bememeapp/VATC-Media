@@ -23,7 +23,7 @@ services:
       - key: TEXT_MODEL
         value: gpt-5-mini
       - key: IMAGE_MODEL
-        value: gpt-image-1-mini
+        value: gpt-image-2
       - key: IMAGE_QUALITY
         value: medium
       - key: RETENTION_HOURS
