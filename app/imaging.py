@@ -79,7 +79,7 @@ def detect_photo_areas(original):
             for left in (True, False):
                 cx = slice(0,radius) if left else slice(-radius,None)
                 # Split collages have square corners against their internal gutter.
-                neighbor = any(oy.start <= edge_y < oy.stop and
+                neighbor = any(oy.start-kernel <= edge_y < oy.stop+kernel and
                     0 <= (xs.start-ox.stop if left else ox.start-xs.stop) < .035*w
                     for (oy,ox),_ in panels if (oy,ox) != bounds)
                 if not neighbor:
