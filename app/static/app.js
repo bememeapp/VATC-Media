@@ -2,7 +2,6 @@ const $ = id => document.getElementById(id);
 const busy = p => ['queued','analysing','editing'].includes(p.status);
 let batchId = new URLSearchParams(location.hash.slice(1)).get('batch') || localStorage.getItem('vatc-batch');
 let posts = [], filter = 'all', configured = false, uploading = false, selected = null, currentView = 'result';
-let regions = [], baseImage, maskCanvas, brush = 'protect', drawing = false, startPoint;
 let toastTimer, polling = false, queueing = false;
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const url = (p, kind) => `/api/batches/${p.batch}/posts/${p.id}/file/${kind}?v=${p.updated}`;
@@ -37,10 +36,9 @@ async function refresh() {
   } finally { polling = false; }
 }
 function status(p) {
-  if (p.approved) return ['✓ Reviewed','ready'];
-  if (p.status === 'ready') return ['Ready to review','ready'];
-  if (p.status === 'failed') return ['Needs attention','attention'];
-  if (p.status === 'review') return ['Check selection','attention'];
+  if (p.status === 'ready') return ['Ready','ready'];
+  if (p.status === 'failed') return ['Could not generate','attention'];
+  if (p.status === 'review') return ['Could not generate','attention'];
   if (p.status === 'editing') return [p.stage || 'Editing backgrounds','busy'];
   if (p.status === 'analysing') return ['Writing & analysing','busy'];
   if (p.status === 'queued') return ['In the queue','busy'];
@@ -52,19 +50,18 @@ function render() {
   const active = posts.filter(busy);
   $('allCount').textContent = $('totalBadge').textContent = posts.length;
   $('readyCount').textContent = ready.length;
-  $('attentionCount').textContent = attention.length;
   $('batchTag').textContent = batchId ? `BATCH ${batchId.slice(0,6).toUpperCase()}` : 'NEW BATCH';
-  $('batchSummary').textContent = posts.length ? `${posts.length} post${posts.length===1?'':'s'} · ${ready.length} ready${active.length ? ` · ${active.length} processing` : ''}${attention.length ? ` · ${attention.length} need a look` : ''}` : 'Good posts start here. Add your first images above.';
+  $('batchSummary').textContent = posts.length ? `${posts.length} post${posts.length===1?'':'s'} · ${ready.length} ready${active.length ? ` · ${active.length} processing` : ''}${attention.length ? ` · ${attention.length} could not generate` : ''}` : 'Good posts start here. Add your first images above.';
   $('generateAll').disabled = !configured || uploading || queueing || !posts.some(p=>p.status === 'uploaded');
   $('downloadAll').disabled = !ready.length;
   $('newBatch').disabled = uploading || queueing;
-  const visible = filter === 'all' ? posts : filter === 'ready' ? ready : attention;
+  const visible = filter === 'all' ? posts : ready;
   $('emptyState').hidden = !!visible.length;
   $('emptyState').querySelector('h3').textContent = posts.length ? 'No posts in this view yet' : 'Your next batch is a drop away';
-  $('emptyState').querySelector('p').innerHTML = posts.length ? 'Your posts will appear here as they progress.' : 'Upload your originals, generate the edits, then give<br>each post a final look before downloading.';
+  $('emptyState').querySelector('p').innerHTML = posts.length ? 'Your posts will appear here as they progress.' : 'Upload your originals, generate the edits,<br>then download your images and captions.';
   $('grid').innerHTML = visible.map(p=>{
     const [label,cls] = status(p);
-    return `<article class="post-card"><button class="card-image" data-action="review" data-id="${p.id}" aria-label="Review ${escape(p.filename)}"><img loading="lazy" src="${url(p,p.has_result?'result':'thumb')}" alt="${escape(p.filename)}"><span class="status-pill ${cls}">${escape(label)}</span></button><div class="card-body"><div class="card-title">${escape(p.title || p.filename)}</div><div class="card-filename">${escape(p.filename)} · ${p.width} × ${p.height}</div><p class="card-caption">${escape(p.error || p.caption || 'Your refreshed image and caption will appear here.')}</p><div class="card-actions">${p.status==='uploaded' || p.status==='failed' ? `<button class="button small primary" data-action="generate" data-id="${p.id}" ${!configured?'disabled':''}>${p.status==='failed'?'↻ Retry post':'✧ Generate'}</button>` : `<button class="button small secondary" data-action="review" data-id="${p.id}" ${busy(p)?'disabled':''}>${busy(p)?'Processing…':'Review post ↗'}</button>`}<button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="Remove ${escape(p.filename)}" ${busy(p)?'disabled':''}>×</button></div></div></article>`;
+    return `<article class="post-card"><button class="card-image" data-action="open" data-id="${p.id}" aria-label="Open ${escape(p.filename)}"><img loading="lazy" src="${url(p,p.has_result?'result':'thumb')}" alt="${escape(p.filename)}"><span class="status-pill ${cls}">${escape(label)}</span></button><div class="card-body"><div class="card-title">${escape(p.title || p.filename)}</div><div class="card-filename">${escape(p.filename)} · ${p.width} × ${p.height}</div><p class="card-caption">${escape(p.error || p.caption || 'Your refreshed image and caption will appear here.')}</p><div class="card-actions">${busy(p) ? '<button class="button small secondary" disabled>Processing…</button>' : p.status==='uploaded' ? `<button class="button small primary" data-action="generate" data-id="${p.id}" ${!configured?'disabled':''}>✧ Generate</button>` : `<button class="button small primary" data-action="regenerate" data-id="${p.id}" ${!configured?'disabled':''}>↻ Regenerate image</button>`}<button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="Remove ${escape(p.filename)}" ${busy(p)?'disabled':''}>×</button></div>${p.has_result ? `<div class="card-actions"><a class="button small secondary" href="${url(p,'result')}" download="${escape(p.filename.replace(/\.[^.]+$/,''))}-edited.png">↓ Image</a><button class="button small secondary" data-action="open" data-id="${p.id}">Caption</button></div>` : ''}</div></article>`;
   }).join('');
 }
 async function uploadFiles(fileList) {
@@ -112,33 +109,28 @@ $('downloadAll').onclick = ()=>{location.href=`/api/batches/${batchId}/download`
 $('grid').onclick = e=>action(async()=>{
   const button = e.target.closest('[data-action]'); if(!button)return;
   const p = posts.find(p=>p.id===button.dataset.id); if(!p)return;
-  if (button.dataset.action === 'review') await openEditor(p);
+  if (button.dataset.action === 'open') await openEditor(p);
   if (button.dataset.action === 'generate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:p.status==='failed'?'retry':'all'})});await refresh();}
+  if (button.dataset.action === 'regenerate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:'image'})});await refresh();}
   if (button.dataset.action === 'remove') {await api(endpoint(p),{method:'DELETE'});await refresh();}
 });
 async function loadImage(src) {
   const img=new Image(); img.src=src; await img.decode(); return img;
 }
 async function openEditor(p) {
-  if(busy(p)) {toast('This post is still processing. It will be ready to review shortly.');return;}
-  selected=p; regions=structuredClone(p.regions);
+  if(busy(p)) {toast('This post is still processing. It will be ready shortly.');return;}
+  selected=p;
   $('editorTitle').textContent=p.title||p.filename;
   $('captionText').value=p.caption;
   updateCharacterCount();
   $('reviewNote').textContent=p.error||p.note;
   $('reviewNote').hidden=!(p.error||p.note);
-  $('approvePost').textContent=p.approved?'✓ Reviewed':'✓ Mark reviewed';
-  $('approvePost').disabled=!p.has_result||!p.caption.trim();
   $('downloadImage').hidden=!p.has_result;
   $('downloadImage').href=url(p,'result');
   $('downloadImage').download=`${p.filename.replace(/\.[^.]+$/,'')}-edited.png`;
   $('redoImage').disabled=$('redoCaption').disabled=!configured;
   $('saveCaption').disabled=false;
-  baseImage=await loadImage(url(p,'original'));
-  maskCanvas=document.createElement('canvas'); maskCanvas.width=p.width;maskCanvas.height=p.height;
-  const ctx=maskCanvas.getContext('2d'); ctx.fillStyle='black';ctx.fillRect(0,0,p.width,p.height);
-  if(p.has_mask) ctx.drawImage(await loadImage(url(p,'mask')),0,0);
-  await showView(p.status==='review'?(p.has_mask?'mask':'layout'):(p.has_result?'result':'original'));
+  await showView(p.has_result?'result':'original');
   $('editor').showModal();
 }
 function updateCharacterCount() {$('characterCount').textContent=`${$('captionText').value.length.toLocaleString()} / 2,200`;}
@@ -150,7 +142,6 @@ $('closeEditor').onclick=()=>action(async()=>{await persistCaption();$('editor')
 $('editor').addEventListener('cancel',e=>{e.preventDefault();$('closeEditor').click();});
 $('saveCaption').onclick=()=>action(async()=>{await persistCaption();await refresh();toast('Caption saved.');});
 $('copyCaption').onclick=()=>action(async()=>{await navigator.clipboard.writeText($('captionText').value);toast('Caption copied.');});
-$('approvePost').onclick=()=>action(async()=>{await persistCaption();selected=await api(endpoint(selected,'/approve'),{method:'POST'});$('approvePost').textContent=selected.approved?'✓ Reviewed':'✓ Mark reviewed';await refresh();toast(selected.approved?'Post marked as reviewed.':'Review mark removed.');});
 async function rerun(mode) {
   await persistCaption();
   await api(endpoint(selected,'/run'),{method:'POST',body:JSON.stringify({mode})});
@@ -162,47 +153,9 @@ document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>action(()=>sho
 async function showView(view) {
   currentView=view;
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===view));
-  const editing=['mask','layout'].includes(view);
-  $('editCanvas').hidden=!editing;$('reviewImage').hidden=editing;
-  $('maskControls').hidden=view!=='mask';$('layoutControls').hidden=view!=='layout';
-  if(!editing) {
-    $('reviewImage').src=url(selected,view==='result'&&selected.has_result?'result':'original');
-    $('visualHelp').textContent=view==='result'&&!selected.has_result?'An edited version will appear after generation. Showing the original for now.':'Compare with the original and check the subject edges.';
-  } else {
-    $('editCanvas').width=selected.width;$('editCanvas').height=selected.height;
-    $('visualHelp').textContent=view==='mask'?'Blue areas can change. Everything else stays original. Protect missed subject details, or paint background to edit.':'Draw one rectangle around each photo only. Exclude text, avatars and white gaps. Clear areas to start over.';
-    drawCanvas(); if(view==='layout')renderRegions();
-  }
+  $('reviewImage').src=url(selected,view==='result'&&selected.has_result?'result':'original');
+  $('visualHelp').textContent=view==='result'&&!selected.has_result?'Your edited image will appear here after generation.':'Same post. A refreshed background.';
 }
-function drawCanvas(preview) {
-  const canvas=$('editCanvas'),ctx=canvas.getContext('2d');ctx.drawImage(baseImage,0,0);
-  if(currentView==='mask') {
-    const data=maskCanvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height);
-    for(let i=0;i<data.data.length;i+=4){const allowed=data.data[i];data.data[i]=49;data.data[i+1]=94;data.data[i+2]=234;data.data[i+3]=allowed>127?105:0;}
-    const overlay=document.createElement('canvas');overlay.width=canvas.width;overlay.height=canvas.height;overlay.getContext('2d').putImageData(data,0,0);ctx.drawImage(overlay,0,0);
-  } else {
-    const all=preview?[...regions,preview]:regions;
-    all.forEach((r,i)=>{const x=r.x*canvas.width/1000,y=r.y*canvas.height/1000,w=r.w*canvas.width/1000,h=r.h*canvas.height/1000;ctx.fillStyle='#315eea22';ctx.fillRect(x,y,w,h);ctx.strokeStyle='#315eea';ctx.lineWidth=Math.max(2,canvas.width/300);ctx.strokeRect(x,y,w,h);ctx.fillStyle='#315eea';ctx.font=`bold ${Math.max(20,canvas.width/35)}px sans-serif`;ctx.fillText(String(i+1),x+8,y+Math.max(26,canvas.width/30));});
-  }
-}
-function renderRegions() {
-  $('regionsList').innerHTML=regions.map((r,i)=>`<div class="region-row"><span>Photo ${i+1}</span><textarea data-region="${i}" aria-label="Background for photo ${i+1}" maxlength="1500">${escape(r.background)}</textarea><button class="icon-button" data-remove-region="${i}" aria-label="Remove photo area ${i+1}">×</button></div>`).join('');
-}
-$('regionsList').oninput=e=>{if(e.target.dataset.region!==undefined)regions[Number(e.target.dataset.region)].background=e.target.value;};
-$('regionsList').onclick=e=>{const button=e.target.closest('[data-remove-region]');if(button){regions.splice(Number(button.dataset.removeRegion),1);renderRegions();drawCanvas();}};
-$('clearRegions').onclick=()=>{regions=[];renderRegions();drawCanvas();};
-function point(e) {const r=$('editCanvas').getBoundingClientRect();return {x:Math.max(0,Math.min(selected.width,(e.clientX-r.left)*selected.width/r.width)),y:Math.max(0,Math.min(selected.height,(e.clientY-r.top)*selected.height/r.height))};}
-function rectangle(a,b){return {x:Math.round(Math.min(a.x,b.x)*1000/selected.width),y:Math.round(Math.min(a.y,b.y)*1000/selected.height),w:Math.round(Math.abs(a.x-b.x)*1000/selected.width),h:Math.round(Math.abs(a.y-b.y)*1000/selected.height),background:'A natural, different background appropriate to the subject, matching the original lighting and perspective.'};}
-let lastPoint;
-function paint(p){const ctx=maskCanvas.getContext('2d');ctx.strokeStyle=ctx.fillStyle=brush==='protect'?'black':'white';ctx.lineWidth=Number($('brushSize').value)*selected.width/$('editCanvas').getBoundingClientRect().width;ctx.lineCap='round';ctx.beginPath();ctx.moveTo((lastPoint||p).x,(lastPoint||p).y);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.beginPath();ctx.arc(p.x,p.y,ctx.lineWidth/2,0,Math.PI*2);ctx.fill();lastPoint=p;drawCanvas();}
-$('editCanvas').onpointerdown=e=>{if(currentView==='layout'&&regions.length>=8){toast('Up to eight photos per post.');return;}drawing=true;startPoint=point(e);lastPoint=null;e.target.setPointerCapture(e.pointerId);if(currentView==='mask')paint(startPoint);};
-$('editCanvas').onpointermove=e=>{if(!drawing)return;const p=point(e);if(currentView==='mask')paint(p);else drawCanvas(rectangle(startPoint,p));};
-$('editCanvas').onpointerup=e=>{if(!drawing)return;drawing=false;if(currentView==='layout'){const r=rectangle(startPoint,point(e));if(r.w>15&&r.h>15){regions.push(r);renderRegions();}drawCanvas();}};
-$('editCanvas').onpointercancel=()=>{drawing=false;drawCanvas();};
-$('protectBrush').onclick=()=>{brush='protect';$('protectBrush').classList.add('selected');$('editBrush').classList.remove('selected');};
-$('editBrush').onclick=()=>{brush='edit';$('editBrush').classList.add('selected');$('protectBrush').classList.remove('selected');};
-$('saveLayout').onclick=()=>action(async()=>{await persistCaption();selected=await api(endpoint(selected,'/layout'),{method:'PUT',body:JSON.stringify({regions:regions.map(({x,y,w,h,background})=>({x,y,w,h,background}))})});$('editor').close();await refresh();toast('Photo areas saved. Generate the post to apply them.');});
-$('saveMask').onclick=()=>action(async()=>{await persistCaption();selected=await api(endpoint(selected,'/mask'),{method:'PUT',body:JSON.stringify({image:maskCanvas.toDataURL('image/png')})});$('editor').close();await refresh();toast('Edit mask saved. Generate the post to apply it.');});
 async function init(){
   const config=await api('/api/config'); configured=config.configured;
   $('connection').innerHTML=`<i></i> ${configured?'Ready to create':'Setup needed'}`;
