@@ -22,7 +22,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from . import store
-from .imaging import build_edit_mask, composite_background, crop_request, pixel_box, read_upload
+from .imaging import PIPELINE_VERSION, build_edit_mask, composite_background, detect_photo_areas, prepare_edit, restore_edit, pixel_box, read_upload
 from .provider import OpenAIProvider, ProviderError
 
 logger = logging.getLogger("vatc")
@@ -92,60 +92,54 @@ async def process(post):
     try:
         original = await asyncio.to_thread(lambda: Image.open(folder / "original.png").convert("RGB"))
         mode = post.get("mode", "all")
-        if mode == "caption" or not post.get("regions") or not post.get("caption"):
+        if mode != "caption" and post.get("pipeline") != PIPELINE_VERSION:
+            for old in [folder / "mask.png", folder / "result.png", *folder.glob("edited-*.png")]:
+                old.unlink(missing_ok=True)
+            post.update(regions=[], has_mask=False, has_result=False, layout_confirmed=False, pipeline=PIPELINE_VERSION)
+        if mode == "caption" or not post.get("caption"):
             store.consume("text")
-            info = await provider.analyse(original, mode == "caption")
+            info = await provider.analyse(original, True)
             post.update(title=info["title"][:100], caption=info["caption"], note=info["review_note"][:1200])
-            if mode != "caption" and not post.get("regions"):
-                try:
-                    post["regions"] = normalized_regions(info["regions"], original.size)
-                except (ValueError, KeyError, TypeError):
-                    post.update(status="review", error="Check the photo areas. We could not confidently locate them.")
-                    store.save(post)
-                    return
             store.save(post)
         if mode == "caption":
             post.update(status="ready" if post.get("has_result") else "uploaded", error="")
             store.save(post)
             return
-        if any(r.get("confidence",1) < .8 for r in post["regions"]) and not post.get("layout_confirmed"):
-            post.update(status="review", error="Please check the detected photo areas before editing.")
+        post.update(status="editing", stage="Editing the original post")
+        store.save(post)
+        try:
+            envelope, detected = await asyncio.to_thread(detect_photo_areas, original)
+        except ValueError as exc:
+            post.update(status="review", error=str(exc))
             store.save(post)
             return
-        post.update(status="editing", stage="Protecting subjects")
-        store.save(post)
+        if not post.get("layout_confirmed"):
+            post["regions"] = detected
         mask_path = folder / "mask.png"
-        if not mask_path.exists():
-            mask, coverage = await asyncio.to_thread(build_edit_mask, original, post["regions"], os.getenv("SEGMENTATION_MODEL", "u2netp"))
-            await asyncio.to_thread(mask.save, mask_path)
-            post["has_mask"] = True
-            if any(c < .03 or c > .98 for c in coverage):
-                post.update(status="review", error="The subject was difficult to separate. Check the edit mask before continuing.")
-                store.save(post)
-                return
-        mask = Image.open(mask_path).convert("L")
+        if mask_path.exists():
+            mask = Image.open(mask_path).convert("L")
+            mask = Image.fromarray(np.minimum(np.asarray(mask),np.asarray(envelope)))
+        elif post.get("layout_confirmed"):
+            mask = await asyncio.to_thread(build_edit_mask, original, post["regions"])
+        else:
+            mask = envelope
         if not mask.getbbox():
-            raise ValueError("No background is selected. Paint an editable area in the mask editor.")
-        combined = original.copy()
-        for index, region in enumerate(post["regions"]):
-            post["stage"] = f"Editing photo {index+1} of {len(post['regions'])}"
-            store.save(post)
-            canvas, api_mask, unpad, box = await asyncio.to_thread(crop_request, original, mask, region)
-            if not mask.crop(box).getbbox():
-                continue
-            cached = folder / f"edited-{index}.png"
-            if not cached.exists():
-                store.consume("image")
-                raw = await provider.edit(canvas, api_mask, region["background"])
-                generated = Image.open(io.BytesIO(raw)).convert("RGB")
-                generated = generated.resize(canvas.size, Image.Resampling.LANCZOS).crop(unpad)
-                generated = generated.resize((box[2]-box[0],box[3]-box[1]),Image.Resampling.LANCZOS)
-                # Match monochrome originals without changing any foreground pixels.
-                arr = np.asarray(original.crop(box)).astype("int16")
-                if np.mean(np.abs(arr[:,:,0] - arr[:,:,1])) < 2 and np.mean(np.abs(arr[:,:,1]-arr[:,:,2])) < 2:
-                    generated = ImageOps.grayscale(generated).convert("RGB")
-                await asyncio.to_thread(generated.save, cached)
-            combined.paste(Image.open(cached).convert("RGB"), box)
+            raise ValueError("No photo area is selected. Check the photo areas before editing.")
+        await asyncio.to_thread(mask.save, mask_path)
+        post["has_mask"] = True
+        store.save(post)
+        cached = folder / "edited-post.png"
+        if not cached.exists():
+            canvas, api_mask, unpad = await asyncio.to_thread(prepare_edit, original, mask)
+            preferences = ""
+            if post.get("layout_confirmed"):
+                preferences = "; ".join(r["background"] for r in post["regions"])
+            store.consume("image")
+            raw = await provider.edit(canvas, api_mask, preferences)
+            generated = Image.open(io.BytesIO(raw)).convert("RGB")
+            generated = await asyncio.to_thread(restore_edit, generated, canvas.size, unpad, original.size)
+            await asyncio.to_thread(generated.save, cached)
+        combined = Image.open(cached).convert("RGB")
         result = await asyncio.to_thread(composite_background, original, combined, mask)
         await asyncio.to_thread(result.save, folder / "result.png")
         post.update(status="ready", stage="", error="", has_result=True, approved=False)
@@ -272,7 +266,7 @@ async def upload(batch_id: str, request: Request):
     except Exception:
         raise HTTPException(400,"Upload a valid JPG, PNG or WebP, 128–8,000 pixels per side and up to 20 megapixels.") from None
     post = {"id":str(uuid.uuid4()), "batch":batch_id, "created":time.time(), "updated":time.time(),
-            "filename":Path(unquote(request.headers.get("x-filename","post.png"))).name[:150],
+            "pipeline":PIPELINE_VERSION, "filename":Path(unquote(request.headers.get("x-filename","post.png"))).name[:150],
             "title":"", "caption":"", "regions":[], "note":"", "error":"", "status":"uploaded",
             "has_result":False, "has_mask":False,"approved":False,"width":img.width,"height":img.height}
     folder = store.directory(post)
@@ -358,7 +352,7 @@ async def layout(batch_id: str, post_id: str, payload: Layout):
     folder = store.directory(post)
     for p in [folder / "mask.png", folder / "result.png", *folder.glob("edited-*.png")]:
         p.unlink(missing_ok=True)
-    post.update(regions=regions,layout_confirmed=True,has_mask=False,has_result=False,approved=False,status="uploaded",error="")
+    post.update(pipeline=PIPELINE_VERSION,regions=regions,layout_confirmed=True,has_mask=False,has_result=False,approved=False,status="uploaded",error="")
     store.save(post)
     return post
 
@@ -378,9 +372,8 @@ async def mask(batch_id: str, post_id: str, payload: Mask):
         if image.size != (post["width"],post["height"]):
             raise ValueError()
         image = image.point(lambda p: 255 if p > 127 else 0)
-        envelope = Image.new("L",image.size,0)
-        for r in post["regions"]:
-            envelope.paste(255,pixel_box(r,image.size))
+        original = Image.open(folder / "original.png").convert("RGB")
+        envelope = build_edit_mask(original, post["regions"])
         image = Image.fromarray(np.minimum(np.array(image),np.array(envelope)))
         if not image.getbbox():
             raise ValueError()
