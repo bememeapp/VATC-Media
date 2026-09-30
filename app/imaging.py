@@ -1,6 +1,8 @@
 """Local masking/compositing. Generated pixels can only enter allowed backgrounds."""
 import io
+import os
 import threading
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
@@ -40,13 +42,35 @@ def pixel_box(region, size):
 
 
 def subject_mask(crop: Image.Image, model="u2netp") -> Image.Image:
-    # Shared CPU session is serialised to avoid memory spikes on a small host.
+    # Run the small model directly: rembg's general-purpose import also loads
+    # matting/Numba libraries that exceed the 512 MB host's memory budget.
     global _session
-    from rembg import new_session, remove
+    import onnxruntime as ort
+    if model != "u2netp":
+        raise ValueError("This server supports the u2netp subject protection model.")
     with _segmentation_lock:
         if _session is None:
-            _session = new_session(model, providers=["CPUExecutionProvider"])
-        mask = remove(crop, session=_session, only_mask=True)
+            legacy = Path(os.getenv("U2NET_HOME", os.path.join(os.getenv("XDG_DATA_HOME", "~"), ".u2net"))).expanduser()
+            default = os.path.join(os.environ["XDG_DATA_HOME"], "rembg") if os.getenv("XDG_DATA_HOME") else "~/.rembg"
+            root = legacy if os.getenv("U2NET_HOME") else Path(os.getenv("REMBG_HOME", default)).expanduser()
+            candidates = [root / "models/u2netp/u2netp.onnx", legacy / "u2netp.onnx"]
+            path = next((p for p in candidates if p.is_file()), None)
+            if path is None:
+                raise ValueError("Subject protection model is missing. Run the build warmup before generating.")
+            options = ort.SessionOptions()
+            options.intra_op_num_threads = 1
+            options.inter_op_num_threads = 1
+            options.enable_cpu_mem_arena = False
+            options.enable_mem_pattern = False
+            _session = ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
+        pixels = np.asarray(crop.convert("RGB").resize((320,320), Image.Resampling.LANCZOS)).astype(np.float64)
+        pixels /= max(float(pixels.max()), 1e-6)
+        pixels = (pixels - np.array([.485,.456,.406])) / np.array([.229,.224,.225])
+        inputs = np.expand_dims(pixels.transpose(2,0,1), 0).astype(np.float32)
+        prediction = _session.run(None, {_session.get_inputs()[0].name: inputs})[0][0,0]
+        span = float(prediction.max() - prediction.min())
+        prediction = (prediction - prediction.min()) / span if span > 0 else np.zeros_like(prediction)
+        mask = Image.fromarray((prediction * 255).astype(np.uint8)).resize(crop.size, Image.Resampling.LANCZOS)
     # Conservatively keep uncertain edge pixels as original pixels.
     return mask.convert("L").point(lambda p: 255 if p >= 24 else 0).filter(ImageFilter.MaxFilter(5))
 
