@@ -134,6 +134,9 @@ async def process(post):
             preferences = ""
             if post.get("layout_confirmed"):
                 preferences = "; ".join(r["background"] for r in post["regions"])
+            post["image_model"] = getattr(provider, "image_model", "test")
+            post["image_quality"] = getattr(provider, "quality", "test")
+            store.save(post)
             store.consume("image")
             raw = await provider.edit(canvas, api_mask, preferences)
             generated = Image.open(io.BytesIO(raw)).convert("RGB")
