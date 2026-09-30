@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: vatc-media
+    name: VATC-Media
     runtime: python
-    region: frankfurt
-    plan: 1c-2g
+    region: oregon
+    plan: 0.5c-512mb
     buildCommand: pip install -r requirements.txt && python scripts/warmup.py
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /healthz
@@ -27,7 +27,7 @@ services:
       - key: RETENTION_HOURS
         value: 24
       - key: WORKER_CONCURRENCY
-        value: 2
+        value: 1
       - key: OMP_NUM_THREADS
         value: 1
       - key: NUMBA_NUM_THREADS

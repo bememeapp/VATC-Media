@@ -7,19 +7,19 @@ A shared, no-login dashboard for uploading image posts, replacing photo backgrou
 [Deploy the dashboard](https://dashboard.render.com/select-repo?type=blueprint)
 
 1. In Render, choose **New → Blueprint** and connect **bememeapp/VATC-Media**. Grant GitHub access only to this repository.
-2. Render reads `render.yaml`. Review the paid web-service and 5 GB temporary disk charges before deploying. The proposed web service has 2 GB RAM for local subject masking. Workspace fees, disk and AI usage are separate.
+2. Render reads `render.yaml`. Review the paid web-service and 5 GB temporary disk charges before deploying. The starting web service has 512 MB RAM and processes one post at a time. Workspace fees, disk and AI usage are separate.
 3. Paste your OpenAI **API project** key into the `OPENAI_API_KEY` field. Never put it in GitHub, screenshots or a chat.
 4. Deploy. The build installs dependencies and downloads the subject-protection model. Open the resulting `onrender.com` URL.
 5. Upload **one** of your original posts and generate it. Check its photo areas, foreground edges, caption and OpenAI usage before running larger batches.
 
-The supplied Blueprint uses Render's `1c-2g` plan (1 CPU / 2 GB RAM). A free instance is unsuitable for the persistent processing queue and local masking model.
+The supplied Blueprint matches the existing Oregon service and uses Render's `0.5c-512mb` plan (0.5 CPU / 512 MB RAM), starting at $7/month plus $1.25/month for the 5 GB disk, before tax and usage overages. This is a lower-cost trial configuration: real batch memory use and throughput must be verified before team rollout. Large images may exceed this memory limit. A free instance cannot attach the persistent disk.
 
 No Supabase, Instagram connection or additional ChatGPT subscription is required. This app uses separately billed OpenAI API requests. Users do not need OpenAI accounts: all generations use the server owner's API key and billing.
 
 ## Workflow
 
 1. Upload JPG, PNG or WebP files, up to 12 MB / 20 megapixels each. Uploads are sent separately, so a batch is not one huge request.
-2. Click **Generate batch**. A persistent queue processes two posts at a time. Closing the browser does not cancel a batch.
+2. Click **Generate batch**. A persistent queue processes one post at a time with the starting configuration. Closing the browser does not cancel a batch.
 3. Open **Review post**. Compare the original, edit the caption, and mark reviewed when satisfied.
 4. If a layout is uncertain, use **Photo areas** to draw one rectangle per photo and describe each backdrop. Save, then generate again.
 5. In **Edit mask**, blue means editable background. Paint **Protect subject** over missed foreground details, or **Edit background** over an area that should change. Save, then generate again.
@@ -41,7 +41,7 @@ Batch links contain unpredictable identifiers. Keep the current batch URL to ret
 
 One web-service process owns a SQLite queue, image files and worker tasks. The Render disk keeps active batches through restarts; content is deleted after 24 hours (cleanup runs every minute and waits for active processing). Expired batches are immediately inaccessible. There is no permanent post library. Daily request counters are retained for seven days.
 
-Use **one process and one instance**. Do not increase Uvicorn workers or horizontally scale this SQLite/disk deployment. Two async workers are enough for an initial 50–150 posts/day workload; capacity and latency must be measured on real batches.
+Use **one process and one instance**. Do not increase Uvicorn workers or horizontally scale this SQLite/disk deployment. Keep `WORKER_CONCURRENCY=1` on the 512 MB server. Capacity, peak memory and latency for the planned 50–150 posts/day must be measured on real batches before increasing concurrency.
 
 A process restart marks in-flight jobs interrupted instead of automatically charging for them again. Explicit retries reuse completed photo edits when possible. Image regeneration intentionally makes new paid requests. Timeout errors tell users to check usage because a timed-out request may have been billed.
 
