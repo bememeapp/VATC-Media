@@ -268,7 +268,7 @@ def test_wrong_output_size_is_rejected():
         imaging.restore_edit(Image.new("RGB",(1024,1024)),(1088,1440),(0,0,1080,1440),(1080,1440))
 
 
-def test_provider_sends_original_and_real_mask(monkeypatch):
+def test_provider_sends_complete_original_without_replacement_mask(monkeypatch):
     from app.provider import OpenAIProvider
     provider=OpenAIProvider()
     captured={}
@@ -282,6 +282,6 @@ def test_provider_sends_original_and_real_mask(monkeypatch):
     asyncio.run(provider.edit(canvas,mask,""))
     assert captured["route"]=="images/edits"
     assert captured["files"]["image"][1]==imaging.png_bytes(canvas)
-    assert captured["files"]["mask"][1]==imaging.png_bytes(mask)
+    assert "mask" not in captured["files"]
     assert captured["data"]["prompt"].startswith("Change the background of the image in this white theme style template.")
     assert "EMPTY background plate" not in captured["data"]["prompt"]
