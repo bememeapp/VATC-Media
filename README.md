@@ -20,16 +20,16 @@ No Supabase, Instagram connection or additional ChatGPT subscription is required
 
 1. Upload JPG, PNG or WebP files, up to 12 MB / 20 megapixels each. Uploads are sent separately, so a batch is not one huge request.
 2. Click **Generate batch**. A persistent queue processes one post at a time with the starting configuration. Closing the browser does not cancel a batch.
-3. Open **Review post**. Compare the original, edit the caption, and mark reviewed when satisfied.
-4. Use **Photo areas** to narrow the selected photos and optionally describe a backdrop. Manual areas remain clipped to detected photo boundaries. Very light or unusual layouts may require preparing a clearer source file.
-5. In **Edit mask**, blue means the photo area the model may edit. Paint **Protect subject** over missed foreground details, or **Edit background** over an area that should change. Save, then generate again.
-6. Download each image and copy its caption, or **Download all** for PNGs, matching text files and a pairing manifest. Partial batches download completed pairs only. Review status is recorded in the manifest; it is not a publication approval gate.
+3. Download a finished image directly from its card, or open **Caption** to copy or edit its caption.
+4. Click **Regenerate image** on a card for another background edit starting from the original. The caption stays unchanged. Use **Rewrite caption** inside the post for fresh wording.
+5. Use **Download all** for PNGs, matching text files and a pairing manifest. There is no review or approval step. Failed generations show a plain error and a regenerate button.
+
 
 Batch links contain unpredictable identifiers. Keep the current batch URL to return or share it. Different visitors are not shown one another's batches. Anyone with a batch link can see or change its contents. The dashboard itself is public, as requested.
 
 ## Image fidelity and limitations
 
-- The image editor receives the complete original post with the user's background-edit prompt and a photo-area mask. It edits the existing scene directly; there are no generated empty background plates or foreground cutouts.
+- The image editor receives the complete original post with the user's background-edit prompt. A local photo-area mask protects the template after editing. It edits the existing scene directly; there are no generated empty background plates or foreground cutouts.
 - Local image analysis finds solid photo panels on white templates. Text, avatars, margins, gutters and rounded exterior corners outside those panels are copied from the original pixels. Manual selections cannot expand beyond that envelope.
 - Detection is conservative and can miss very pale or unusual panels. Review the original and result. Subjects within photos are preserved by the editing instruction, not guaranteed pixel-identical; the model can still change details.
 - The full post is proportionally resized only when needed, then padded to the model's size grid. Output of an unexpected size is rejected. Old cutout masks and cached edits are invalidated when regenerating.
