@@ -45,7 +45,7 @@ def detect_photo_areas(original):
 
     Thin text is removed before connected-component detection. White photographic
     backgrounds remain editable; only exterior corners and gutters are protected.
-    Ambiguous/light panels require manual review instead of a guessed rectangle.
+    Ambiguous/light panels fail safely instead of using a guessed rectangle.
     """
     preview = original.copy()
     preview.thumbnail((1200, 1600))
@@ -56,6 +56,7 @@ def detect_photo_areas(original):
     labels, _ = label(solid)
     allowed = np.zeros((h,w), dtype=bool)
     regions = []
+    panels = []
     for ident, bounds in enumerate(find_objects(labels), 1):
         if bounds is None:
             continue
@@ -64,18 +65,28 @@ def detect_photo_areas(original):
         component = labels[bounds] == ident
         if bw < .12*w or bh < .10*h or bw*bh < .02*w*h or component.mean() < .55:
             continue
-        # A light backdrop touching a photo edge is still part of the photo.
-        # Filling only enclosed holes leaves jagged old-background fragments.
-        panel = np.ones(component.shape, dtype=bool)
-        radius = max(2, round(min(bw,bh)*.075))
-        rgb = np.asarray(preview)[bounds]
-        for cy in [slice(0,radius),slice(-radius,None)]:
-            for cx in [slice(0,radius),slice(-radius,None)]:
-                panel[cy,cx] &= ~np.all(rgb[cy,cx] >= 247, axis=2)
-        allowed[bounds] |= panel
+        panels.append((bounds, component.copy()))
         regions.append(dict(x=round(xs.start/w*1000), y=round(ys.start/h*1000),
             w=round(bw/w*1000), h=round(bh/h*1000), confidence=1,
             background="A subtle, realistic background change matching the original setting and perspective"))
+    for bounds, component in panels:
+        ys, xs = bounds
+        panel = np.ones(component.shape, dtype=bool)
+        radius = max(2, round(min(component.shape)*.075))
+        for top in (True, False):
+            edge_y = ys.start if top else ys.stop-1
+            cy = slice(0,radius) if top else slice(-radius,None)
+            for left in (True, False):
+                cx = slice(0,radius) if left else slice(-radius,None)
+                # Split collages have square corners against their internal gutter.
+                neighbor = any(oy.start <= edge_y < oy.stop and
+                    0 <= (xs.start-ox.stop if left else ox.start-xs.stop) < .035*w
+                    for (oy,ox),_ in panels if (oy,ox) != bounds)
+                if not neighbor:
+                    # Use the opened component's continuous corner contour, not
+                    # scattered near-white JPEG pixels within the photograph.
+                    panel[cy,cx] = component[cy,cx]
+        allowed[bounds] |= panel
     if not 1 <= len(regions) <= 8 or allowed.mean() > .9:
         raise ValueError("Check the photo areas. This layout could not be separated safely from the text.")
     mask = Image.fromarray(allowed.astype("uint8")*255).resize(original.size, Image.Resampling.NEAREST)
