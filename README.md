@@ -29,13 +29,13 @@ Batch links contain unpredictable identifiers. Keep the current batch URL to ret
 
 ## Image fidelity and limitations
 
-- The app decodes the original, locates photograph panels, and uses local `rembg` segmentation to protect foreground subjects.
+- The app decodes the original, locates photograph panels, and runs the small U2Net model directly through ONNX Runtime to protect foreground subjects. Avoiding the general-purpose matting imports reduces runtime memory. `rembg` downloads the model during the build; Render's `U2NET_HOME` must point inside the deployed source directory so the running service can access it.
 - OpenAI receives individual photo crops and editing masks, never an instruction to redraw the post template. Generated backgrounds are composited into the original, preserving protected pixels exactly in the final lossless PNG.
 - **Detection and segmentation are estimates.** A missed foreground detail can change, and an incorrect photo rectangle can include text. Check the regions/mask; use the built-in correction tools. Hair, feathers, artwork and collage text need special attention. No claim is made that every automatically detected subject is perfectly protected.
 - Masked image models can generate content outside the supplied mask, so the final local composite enforces it again.
 - The default economical image model is `gpt-image-1-mini`, medium quality. Text/vision uses `gpt-5-mini`. Both are configurable through Render environment variables; account availability must be checked with a live request. Switching from ChatGPT's Instant mode is not a guarantee of identical output.
 - Captions are instructed to avoid unsupported claims and attributed meme claims. There is no automated web fact-checking. Human review is still needed.
-- No live OpenAI quality/cost test is possible until the owner configures the API key. Tests use a fake provider for the job pipeline and a real local mask/composite for image integrity.
+- Automated tests use a fake provider for the job pipeline and check protected-pixel integrity. Real OpenAI output, cost and hosting capacity require a separate live test with a configured API key.
 
 ## Temporary storage and queue
 

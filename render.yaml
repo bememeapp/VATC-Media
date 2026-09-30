@@ -18,6 +18,8 @@ services:
         sync: false
       - key: DATA_DIR
         value: /var/data
+      - key: U2NET_HOME
+        value: /opt/render/project/src/.u2net
       - key: TEXT_MODEL
         value: gpt-5-mini
       - key: IMAGE_MODEL
