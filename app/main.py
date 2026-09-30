@@ -116,7 +116,7 @@ async def process(post):
         if not post.get("layout_confirmed"):
             post["regions"] = detected
         mask_path = folder / "mask.png"
-        if mask_path.exists():
+        if mask_path.exists() and post.get("layout_confirmed"):
             mask = Image.open(mask_path).convert("L")
             mask = Image.fromarray(np.minimum(np.asarray(mask),np.asarray(envelope)))
         elif post.get("layout_confirmed"):

@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
-from scipy.ndimage import label, find_objects, binary_fill_holes
+from scipy.ndimage import label, find_objects
 
 Image.MAX_IMAGE_PIXELS = 20_000_000
 PIPELINE_VERSION = "direct-photo-edit-v2"
@@ -43,8 +43,8 @@ def pixel_box(region, size):
 def detect_photo_areas(original):
     """Find solid image panels on a white template without language-model coordinates.
 
-    Thin text is removed before connected-component detection. Holes inside a
-    panel are filled, but exterior white corners and gutters stay protected.
+    Thin text is removed before connected-component detection. White photographic
+    backgrounds remain editable; only exterior corners and gutters are protected.
     Ambiguous/light panels require manual review instead of a guessed rectangle.
     """
     preview = original.copy()
@@ -64,7 +64,15 @@ def detect_photo_areas(original):
         component = labels[bounds] == ident
         if bw < .12*w or bh < .10*h or bw*bh < .02*w*h or component.mean() < .55:
             continue
-        allowed[bounds] |= binary_fill_holes(component)
+        # A light backdrop touching a photo edge is still part of the photo.
+        # Filling only enclosed holes leaves jagged old-background fragments.
+        panel = np.ones(component.shape, dtype=bool)
+        radius = max(2, round(min(bw,bh)*.075))
+        rgb = np.asarray(preview)[bounds]
+        for cy in [slice(0,radius),slice(-radius,None)]:
+            for cx in [slice(0,radius),slice(-radius,None)]:
+                panel[cy,cx] &= ~np.all(rgb[cy,cx] >= 247, axis=2)
+        allowed[bounds] |= panel
         regions.append(dict(x=round(xs.start/w*1000), y=round(ys.start/h*1000),
             w=round(bw/w*1000), h=round(bh/h*1000), confidence=1,
             background="A subtle, realistic background change matching the original setting and perspective"))

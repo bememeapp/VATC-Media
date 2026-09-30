@@ -1,5 +1,7 @@
 import base64
 import json
+import logging
+import re
 import os
 
 import httpx
@@ -75,14 +77,24 @@ class OpenAIProvider:
         except httpx.HTTPError:
             raise ProviderError("Could not reach OpenAI. Please try again later.") from None
         if response.status_code >= 400:
+            try:
+                error = response.json().get("error", {})
+                code = re.sub(r"[^a-zA-Z0-9_.-]", "", str(error.get("code") or error.get("type") or "unknown"))[:80]
+                param = re.sub(r"[^a-zA-Z0-9_.-]", "", str(error.get("param") or ""))[:80]
+                declined = code in {"moderation_blocked", "content_policy_violation"} or "safety" in str(error.get("message", "")).lower()
+            except (ValueError, TypeError, AttributeError):
+                code, param, declined = "unknown", "", False
+            logging.getLogger("vatc").warning("OpenAI request failed: status=%s code=%s parameter=%s", response.status_code, code, param)
             if response.status_code == 401:
                 message = "The OpenAI key is invalid. Update it in Render's Environment settings."
             elif response.status_code == 429:
                 message = "OpenAI's credit or rate limit was reached. Check API billing and limits, then retry."
             elif response.status_code in (403, 404):
                 message = "This OpenAI project cannot access the selected model. Check model access and organisation verification."
+            elif declined:
+                message = "OpenAI declined to edit this image. Your original has been kept."
             else:
-                message = "OpenAI could not complete this request. Check model access or try another post."
+                message = f"OpenAI could not complete this image request ({code}{': ' + param if param else ''}). Please try again later."
             raise ProviderError(message)
         return response.json()
 
