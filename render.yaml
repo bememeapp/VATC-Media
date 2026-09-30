@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: vatc-media
+    runtime: python
+    region: frankfurt
+    plan: 1c-2g
+    buildCommand: pip install -r requirements.txt && python scripts/warmup.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /healthz
+    disk:
+      name: temporary-posts
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.12
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /var/data
+      - key: TEXT_MODEL
+        value: gpt-5-mini
+      - key: IMAGE_MODEL
+        value: gpt-image-1-mini
+      - key: IMAGE_QUALITY
+        value: medium
+      - key: RETENTION_HOURS
+        value: 24
+      - key: WORKER_CONCURRENCY
+        value: 2
+      - key: OMP_NUM_THREADS
+        value: 1
+      - key: NUMBA_NUM_THREADS
+        value: 1
+      - key: SEGMENTATION_MODEL
+        value: u2netp
+      - key: MAX_DAILY_IMAGE_EDITS
+        value: 400
+      - key: MAX_DAILY_TEXT_CALLS
+        value: 800
