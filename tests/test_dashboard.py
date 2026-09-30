@@ -285,3 +285,11 @@ def test_provider_sends_complete_original_without_replacement_mask(monkeypatch):
     assert "mask" not in captured["files"]
     assert captured["data"]["prompt"].startswith("Change the background of the image in this white theme style template.")
     assert "EMPTY background plate" not in captured["data"]["prompt"]
+
+
+def test_pale_background_touching_photo_edge_is_editable():
+    original=fixture_image()
+    ImageDraw.Draw(original).rectangle((170,100,260,175),fill="white")
+    mask,_=imaging.detect_photo_areas(original)
+    assert mask.getpixel((210,110))==255
+    assert mask.getpixel((210,90))==0
