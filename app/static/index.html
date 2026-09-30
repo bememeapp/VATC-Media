@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#172722"><meta name="description" content="VATC Media's shared workspace for refreshing post backgrounds and writing captions.">
+  <title>Post Studio · VATC Media</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css"><script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="VATC Media home"><span class="brandmark">v<span>↗</span></span><span>VATC<span class="brand-sub">MEDIA</span></span></a>
+    <div class="workspace-label">CREATIVE WORKSPACE</div>
+    <button class="nav-item active" id="studioNav"><span class="nav-icon">▦</span> Post studio <span class="nav-dot"></span></button>
+    <button class="nav-item" id="styleNav"><span class="nav-icon">☷</span> House style</button>
+    <div class="sidebar-bottom"><span class="team-avatar">V</span><div>One team. One style.<small>VATC Media workspace</small></div></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><span class="breadcrumb">Workspace <span>/</span> <strong>Post studio</strong></span><div class="top-actions"><span class="connection" id="connection"><i></i> Connecting</span><button id="newBatch" class="button small secondary">＋ New batch</button></div></header>
+    <main>
+      <div class="page-heading"><div><span class="eyebrow">MAKE IT YOUR NEXT POST</span><h1>Post studio<span class="heading-dot">.</span></h1><p>A fresh background. A great caption. Same original idea.</p></div><div class="batch-tag" id="batchTag">NEW BATCH</div></div>
+      <div id="setupNotice" class="notice" hidden>Uploads and previews are ready. To enable generation, add <strong>OPENAI_API_KEY</strong> in Render’s Environment settings.</div>
+      <section class="upload-row">
+        <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Choose images to upload">
+          <div class="upload-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m-4 4 4-4 4 4M4 15v5h16v-5"/></svg></div>
+          <h2>Drop your posts here</h2><p>One image in. One refreshed post and caption out.</p>
+          <span class="button primary">Choose images <span>↗</span></span><small>JPG, PNG or WebP · up to 12 MB each · select multiple files</small>
+          <input type="file" id="fileInput" multiple accept="image/jpeg,image/png,image/webp" hidden>
+        </div>
+        <aside class="recipe"><div class="recipe-top"><span class="eyebrow">THE VATC RECIPE</span><span class="recipe-star">✳</span></div><h2>New setting.<br>Same story.</h2><ul><li><span>01</span> Refresh the photo backgrounds</li><li><span>02</span> Keep the subjects and layout</li><li><span>03</span> Add a witty, informative caption</li></ul><button class="text-button" id="recipeDetails">View house style <span>↗</span></button></aside>
+      </section>
+      <div id="uploadProgress" class="upload-progress" role="status" hidden></div>
+      <section class="batch-section" aria-label="Current batch">
+        <div class="batch-heading"><div><h2>Your batch <span id="totalBadge" class="count-badge">0</span></h2><p id="batchSummary">Good posts start here. Add your first images above.</p></div><div class="batch-actions"><button id="downloadAll" class="button secondary" disabled>↓ Download all</button><button id="generateAll" class="button primary" disabled><span>✧</span> Generate batch</button></div></div>
+        <div class="filter-row"><div class="filters" role="group" aria-label="Filter posts"><button class="filter selected" data-filter="all">All posts <span id="allCount">0</span></button><button class="filter" data-filter="ready">Ready <span id="readyCount">0</span></button><button class="filter" data-filter="attention">Needs attention <span id="attentionCount">0</span></button></div><span id="expiry" class="expiry">Temporary workspace · files expire after 24h</span></div>
+        <div id="grid" class="post-grid"></div>
+        <div class="empty-state" id="emptyState"><div class="empty-illustration"><div class="paper back"></div><div class="paper front"><span>✳</span><i></i><i></i></div><span class="empty-plus">＋</span></div><h3>Your next batch is a drop away</h3><p>Upload your originals, generate the edits, then give<br>each post a final look before downloading.</p></div>
+      </section>
+      <footer><span><i class="green-dot"></i> Made for every VATC Media page</span><span>Review → Download → Post</span></footer>
+    </main>
+  </div>
+  <dialog id="editor" aria-labelledby="editorTitle">
+    <div class="dialog-header"><div><span class="eyebrow">POST REVIEW</span><h2 id="editorTitle">Review post</h2></div><button class="icon-button" id="closeEditor" aria-label="Close post review">×</button></div>
+    <div class="editor-body">
+      <div class="visual-pane"><div class="visual-tabs"><button class="view-tab selected" data-view="result">Edited post</button><button class="view-tab" data-view="original">Original</button><button class="view-tab" data-view="layout">Photo areas</button><button class="view-tab" data-view="mask">Edit mask</button></div><p id="visualHelp" class="visual-help">Compare with the original and check the subject edges.</p><div class="canvas-wrap"><img id="reviewImage" alt="Post preview"><canvas id="editCanvas" hidden></canvas></div><div id="maskControls" class="editor-tools" hidden><button class="button small secondary selected" id="protectBrush">Protect subject</button><button class="button small secondary" id="editBrush">Edit background</button><label>Brush <input id="brushSize" type="range" min="3" max="100" value="25"></label><button class="button small primary" id="saveMask">Save mask</button></div><div id="layoutControls" hidden><div id="regionsList"></div><div class="editor-tools"><button id="clearRegions" class="button small secondary">Clear areas</button><button id="saveLayout" class="button small primary">Save photo areas</button></div></div></div>
+      <div class="caption-pane"><div class="caption-title"><h3>The caption</h3><span class="pill">ENGLISH</span></div><p class="caption-help">A little wit. Plenty of context. Ready for any page.</p><label class="sr-only" for="captionText">Edit caption</label><textarea id="captionText" maxlength="2200" placeholder="Your caption will appear here after generation."></textarea><div class="caption-meta"><span id="characterCount">0 / 2,200</span><button id="copyCaption" class="text-button">Copy caption ⧉</button></div><button class="button secondary" id="saveCaption">Save caption</button><div class="review-note" id="reviewNote" hidden></div><div class="retry-actions"><button class="text-button" id="redoImage">↻ Regenerate image</button><button class="text-button" id="redoCaption">↻ Rewrite caption</button></div><div class="caption-bottom"><button class="button primary" id="approvePost">✓ Mark reviewed</button><a id="downloadImage" class="button secondary" download="post.png">↓ Image</a></div></div>
+    </div>
+  </dialog>
+  <dialog id="styleDialog" class="style-dialog" aria-labelledby="styleTitle"><div class="dialog-header"><div><span class="eyebrow">SHARED BY EVERY PAGE</span><h2 id="styleTitle">The house style</h2></div><button class="icon-button" id="closeStyle" aria-label="Close house style">×</button></div><div class="style-content"><h3>Keep the idea. Change the setting.</h3><p>Only the backgrounds inside the photos are edited. Text, usernames, avatars, white space and protected subjects come from the original file. Black-and-white photos stay black and white.</p><h3>Funny first. Informative throughout.</h3><p>Captions start with a short hook, followed by detailed, readable paragraphs and natural topic keywords. English, occasional emojis, no hashtags and no page-specific promotion.</p><h3>A final look makes all the difference.</h3><p>Check photo areas, subject edges and factual details before posting. Automatic selection can miss details; use Photo areas and Edit mask to correct them.</p><h3>A temporary workspace</h3><p>Files and captions are removed after the retention period shown in your batch. Download your finished posts before then. Keep the batch link to return while it’s active.</p></div></dialog>
+  <div id="toast" role="status" class="toast" hidden></div>
+</body>
+</html>
