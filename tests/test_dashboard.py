@@ -44,11 +44,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main,"provider",FakeProvider())
     async def idle_worker(): await asyncio.sleep(3600)
     monkeypatch.setattr(main,"worker",idle_worker)
-    def protected(crop, model="u2netp"):
-        mask=Image.new("L",crop.size,0)
-        ImageDraw.Draw(mask).rectangle((105,50,215,260),fill=255)
-        return mask
-    monkeypatch.setattr(imaging,"subject_mask",protected)
     with TestClient(main.app) as c:
         yield c
 
@@ -126,9 +121,9 @@ def test_mask_is_clipped_to_photo_areas(client):
 
 
 def test_uncertain_detection_requires_review_before_image_charge(client,monkeypatch):
-    async def uncertain(*args):
-        return {"title":"Uncertain", "caption":"Caption", "review_note":"", "regions":[{**REGION,"confidence":.4}]}
-    monkeypatch.setattr(main.provider,"analyse",uncertain)
+    def uncertain(*args):
+        raise ValueError("Check the photo areas")
+    monkeypatch.setattr(main,"detect_photo_areas",uncertain)
     b,p=upload(client)
     client.post(path(b,p,"/run"),json={"mode":"all"})
     result=execute()
@@ -203,22 +198,90 @@ def test_variable_batch_sizes_return_one_pair_per_upload(client,count):
         assert len(json.loads(z.read('posts.json')))==count
 
 
-def test_retry_reuses_successful_photo_edits(client,monkeypatch):
+def test_collage_uses_one_complete_post_request(client,monkeypatch):
     b,p=upload(client)
     regions=[{"x":100,"y":200,"w":400,"h":600,"background":"Garden"},
              {"x":500,"y":200,"w":400,"h":600,"background":"Garden"}]
     client.put(path(b,p,"/layout"),json={"regions":regions})
-    original_edit=main.provider.edit
-    calls=0
-    async def fail_second(*args):
-        nonlocal calls
-        calls+=1
-        if calls==2: raise main.ProviderError("Test failure")
-        return await original_edit(*args)
-    monkeypatch.setattr(main.provider,"edit",fail_second)
+    captured=[]
+    edit=main.provider.edit
+    async def capture(image,mask,background):
+        captured.append((image.copy(),mask.copy()))
+        return await edit(image,mask,background)
+    monkeypatch.setattr(main.provider,"edit",capture)
     client.post(path(b,p,"/run"),json={"mode":"image"})
+    assert execute()["status"]=="ready"
+    assert len(captured)==1
+    canvas,mask=captured[0]
+    assert canvas.width < canvas.height
+    assert mask.getpixel((0,0))[3]==255
+    assert mask.getpixel((canvas.width//2,canvas.height//2))[3]==0
+
+
+def test_retry_reuses_edit_after_local_failure(client,monkeypatch):
+    b,p=upload(client)
+    composite=main.composite_background
+    def fail(*args): raise ValueError("Local save failed")
+    monkeypatch.setattr(main,"composite_background",fail)
+    client.post(path(b,p,"/run"),json={"mode":"all"})
     assert execute()["status"]=="failed"
-    assert (store.directory(p)/"edited-0.png").exists()
+    monkeypatch.setattr(main,"composite_background",composite)
     client.post(path(b,p,"/run"),json={"mode":"retry"})
     assert execute()["status"]=="ready"
-    assert calls==3  # first succeeds, second fails, only second is retried
+    assert main.provider.image_calls==1
+
+
+def test_old_cutout_cache_is_not_reused(client):
+    b,p=upload(client)
+    p.pop("pipeline")
+    p.update(regions=[REGION],caption="Existing caption",layout_confirmed=True)
+    store.save(p)
+    Image.new("RGB",(400,500),"red").save(store.directory(p)/"edited-0.png")
+    Image.new("L",(400,500),255).save(store.directory(p)/"mask.png")
+    client.post(path(b,p,"/run"),json={"mode":"image"})
+    result=execute()
+    assert result["status"]=="ready"
+    assert not (store.directory(p)/"edited-0.png").exists()
+    assert not np.asarray(Image.open(store.directory(p)/"mask.png"))[:100].any()
+    assert main.provider.image_calls==1
+
+
+def test_rounded_corners_gutters_and_text_protected():
+    original=Image.new("RGB",(1080,1400),"white")
+    d=ImageDraw.Draw(original)
+    d.text((30,40),"Original headline",fill="black",font_size=54)
+    d.ellipse((30,1100,150,1220),fill="navy")
+    d.rounded_rectangle((30,250,525,1000),radius=35,fill="green")
+    d.rounded_rectangle((550,250,1040,1000),radius=35,fill="blue")
+    mask,regions=imaging.detect_photo_areas(original)
+    a=np.asarray(mask)
+    assert len(regions)==2
+    assert not a[:250].any() and not a[1001:].any()
+    assert not a[:,526:550].any()
+    assert a[251,31]==0 and a[500,200]==255
+    result=imaging.composite_background(original,Image.new("RGB",original.size,"red"),mask)
+    assert np.array_equal(np.asarray(result)[a==0],np.asarray(original)[a==0])
+
+
+def test_wrong_output_size_is_rejected():
+    with pytest.raises(ValueError,match="canvas size"):
+        imaging.restore_edit(Image.new("RGB",(1024,1024)),(1088,1440),(0,0,1080,1440),(1080,1440))
+
+
+def test_provider_sends_original_and_real_mask(monkeypatch):
+    from app.provider import OpenAIProvider
+    provider=OpenAIProvider()
+    captured={}
+    async def request(route,**kwargs):
+        captured.update(route=route,**kwargs)
+        return {"data":[{"b64_json":base64.b64encode(imaging.png_bytes(fixture_image())).decode()}]}
+    monkeypatch.setattr(provider,"request",request)
+    original=fixture_image()
+    envelope,_=imaging.detect_photo_areas(original)
+    canvas,mask,_=imaging.prepare_edit(original,envelope)
+    asyncio.run(provider.edit(canvas,mask,""))
+    assert captured["route"]=="images/edits"
+    assert captured["files"]["image"][1]==imaging.png_bytes(canvas)
+    assert captured["files"]["mask"][1]==imaging.png_bytes(mask)
+    assert captured["data"]["prompt"].startswith("Change the background of the image in this white theme style template.")
+    assert "EMPTY background plate" not in captured["data"]["prompt"]
