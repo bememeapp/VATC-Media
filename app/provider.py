@@ -3,6 +3,7 @@ import json
 import os
 
 import httpx
+from PIL import Image
 
 from .imaging import png_bytes
 
@@ -115,16 +116,23 @@ class OpenAIProvider:
             raise ProviderError("The AI returned an unusable caption or layout. Please retry this post.") from None
 
     async def edit(self, image, mask, background):
+        # Generate a clean plate, then the caller composites original subject
+        # pixels over it. Asking the model to retain a subject can leave a second
+        # shifted silhouette outside the protected mask.
+        plate_mask = Image.new("RGBA", image.size, (255,255,255,0))
         data = await self.request("images/edits", data={
             "model": self.image_model, "quality": self.quality,
             "size": f"{image.width}x{image.height}", "n":"1", "output_format":"png",
-            "prompt": "Edit only the transparent background area in the supplied mask. "
-                "Keep the original subject in the exact same position, scale, pose and appearance. "
-                "Do not add subjects, text, watermarks or objects that change the story. "
+            "prompt": "Create a clean EMPTY background plate for compositing. "
+                "Remove ALL foreground subjects from this reference, including all people, "
+                "animals, birds, body parts, shoes and foreground objects. Fill their former "
+                "locations seamlessly with the new background. Do not retain or recreate "
+                "any subject or silhouette. The original subjects will be restored separately. "
+                "Do not add text, watermarks or new focal objects. "
                 "Keep the existing colour treatment: black-and-white originals must stay black and white. "
                 "Match the original perspective and lighting. New background: " + background[:1500]
         }, files={"image": ("photo.png", png_bytes(image), "image/png"),
-                  "mask": ("mask.png", png_bytes(mask), "image/png")})
+                  "mask": ("mask.png", png_bytes(plate_mask), "image/png")})
         try:
             return base64.b64decode(data["data"][0]["b64_json"], validate=True)
         except (KeyError, IndexError, ValueError):
