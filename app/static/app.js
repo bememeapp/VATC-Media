@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const busy = p => ['queued','analysing','editing'].includes(p.status);
 let batchId = new URLSearchParams(location.hash.slice(1)).get('batch') || localStorage.getItem('vatc-batch');
 let posts = [], filter = 'all', configured = false, uploading = false, selected = null, currentView = 'result';
-let toastTimer, polling = false, queueing = false;
+let toastTimer, polling = false, queueing = false, switchingPost = false;
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const url = (p, kind) => `/api/batches/${p.batch}/posts/${p.id}/file/${kind}?v=${p.updated}`;
 const endpoint = (p, suffix='') => `/api/batches/${p.batch}/posts/${p.id}${suffix}`;
@@ -61,8 +61,9 @@ function render() {
   $('emptyState').querySelector('p').innerHTML = posts.length ? 'Your posts will appear here as they progress.' : 'Upload your originals, generate the edits,<br>then download your images and captions.';
   $('grid').innerHTML = visible.map(p=>{
     const [label,cls] = status(p);
-    return `<article class="post-card"><button class="card-image" data-action="open" data-id="${p.id}" aria-label="Open ${escape(p.filename)}"><img loading="lazy" src="${url(p,p.has_result?'result':'thumb')}" alt="${escape(p.filename)}"><span class="status-pill ${cls}">${escape(label)}</span></button><div class="card-body"><div class="card-title">${escape(p.title || p.filename)}</div><div class="card-filename">${escape(p.filename)} · ${p.width} × ${p.height}</div><p class="card-caption">${escape(p.error || p.caption || 'Your refreshed image and caption will appear here.')}</p><div class="card-actions">${busy(p) ? '<button class="button small secondary" disabled>Processing…</button>' : p.status==='uploaded' ? `<button class="button small primary" data-action="generate" data-id="${p.id}" ${!configured?'disabled':''}>✧ Generate</button>` : `<button class="button small primary" data-action="regenerate" data-id="${p.id}" ${!configured?'disabled':''}>↻ Regenerate image</button>`}<button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="Remove ${escape(p.filename)}" ${busy(p)?'disabled':''}>×</button></div>${p.has_result ? `<div class="card-actions"><a class="button small secondary" href="${url(p,'result')}" download="${escape(p.filename.replace(/\.[^.]+$/,''))}-edited.png">↓ Image</a><button class="button small secondary" data-action="open" data-id="${p.id}">Caption</button></div>` : ''}</div></article>`;
+    return `<article class="post-card"><button class="card-image" data-action="open" data-id="${p.id}" aria-label="Open ${escape(p.filename)}"><img loading="lazy" src="${url(p,p.has_result?'result':'thumb')}" alt="${escape(p.filename)}"><span class="status-pill ${cls}">${escape(label)}</span></button><div class="card-body"><div class="card-title">${escape(p.title || p.filename)}</div><div class="card-filename">${escape(p.filename)} · ${p.width} × ${p.height}</div><p class="card-caption">${escape(p.error || p.caption || 'Your refreshed image and caption will appear here.')}</p><div class="card-actions">${busy(p) ? '<button class="button small secondary" disabled>Processing…</button>' : p.status==='uploaded' ? `<button class="button small primary" data-action="generate" data-id="${p.id}" ${!configured?'disabled':''}>✧ Generate</button>` : `<button class="button small primary" data-action="regenerate" data-id="${p.id}" ${!configured?'disabled':''}>↻ Regenerate image</button>`}<button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="Remove ${escape(p.filename)}" ${busy(p)?'disabled':''}>×</button></div>${p.has_result ? `<div class="card-actions"><a class="button small secondary" href="${url(p,'result')}" download="${escape(p.filename.replace(/\.[^.]+$/,''))}-edited.png">↓ Image</a><button class="button small secondary" data-action="copy" data-id="${p.id}" ${!p.caption.trim()?'disabled':''}>Copy caption</button></div>` : ''}</div></article>`;
   }).join('');
+  if ($('editor').open) updatePostNavigation();
 }
 async function uploadFiles(fileList) {
   if (uploading) return;
@@ -110,6 +111,7 @@ $('grid').onclick = e=>action(async()=>{
   const button = e.target.closest('[data-action]'); if(!button)return;
   const p = posts.find(p=>p.id===button.dataset.id); if(!p)return;
   if (button.dataset.action === 'open') await openEditor(p);
+  if (button.dataset.action === 'copy') {await navigator.clipboard.writeText(p.caption);toast('Caption copied.');}
   if (button.dataset.action === 'generate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:p.status==='failed'?'retry':'all'})});await refresh();}
   if (button.dataset.action === 'regenerate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:'image'})});await refresh();}
   if (button.dataset.action === 'remove') {await api(endpoint(p),{method:'DELETE'});await refresh();}
@@ -131,13 +133,44 @@ async function openEditor(p) {
   $('redoImage').disabled=$('redoCaption').disabled=!configured;
   $('saveCaption').disabled=false;
   await showView(p.has_result?'result':'original');
-  $('editor').showModal();
+  if (!$('editor').open) $('editor').showModal();
+  updatePostNavigation();
+  $('editor').querySelector('.editor-panel').scrollTop=0;
 }
 function updateCharacterCount() {$('characterCount').textContent=`${$('captionText').value.length.toLocaleString()} / 2,200`;}
 $('captionText').oninput=updateCharacterCount;
 async function persistCaption() {
-  if(selected && $('captionText').value !== selected.caption) selected=await api(endpoint(selected,'/caption'),{method:'PATCH',body:JSON.stringify({caption:$('captionText').value})});
+  if(selected && $('captionText').value !== selected.caption) {
+    selected=await api(endpoint(selected,'/caption'),{method:'PATCH',body:JSON.stringify({caption:$('captionText').value})});
+    posts=posts.map(p=>p.id===selected.id?selected:p);
+  }
 }
+function navigablePosts() {
+  return posts.filter(p=>!busy(p) && (filter==='all' || (p.has_result && p.caption.trim() && p.status==='ready')));
+}
+function updatePostNavigation() {
+  const list=navigablePosts(), index=list.findIndex(p=>p.id===selected?.id);
+  $('previousPost').disabled=switchingPost || index<=0;
+  $('nextPost').disabled=switchingPost || index<0 || index>=list.length-1;
+  $('postPosition').textContent=index<0?'':` · ${index+1} / ${list.length}`;
+}
+async function navigatePost(direction) {
+  if(switchingPost)return;
+  const list=navigablePosts(), index=list.findIndex(p=>p.id===selected?.id);
+  const target=index<0?null:list[index+direction];
+  if(!target)return;
+  switchingPost=true;updatePostNavigation();
+  try {
+    await persistCaption();
+    await openEditor(posts.find(p=>p.id===target.id) || target);
+  } finally {switchingPost=false;updatePostNavigation();}
+}
+$('previousPost').onclick=()=>action(()=>navigatePost(-1));
+$('nextPost').onclick=()=>action(()=>navigatePost(1));
+$('editor').addEventListener('keydown',e=>{
+  if(e.target.closest('textarea,input,[contenteditable]') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)return;
+  if(e.key==='ArrowLeft' || e.key==='ArrowRight') {e.preventDefault();action(()=>navigatePost(e.key==='ArrowLeft'?-1:1));}
+});
 $('closeEditor').onclick=()=>action(async()=>{await persistCaption();$('editor').close();await refresh();});
 $('editor').addEventListener('cancel',e=>{e.preventDefault();$('closeEditor').click();});
 $('saveCaption').onclick=()=>action(async()=>{await persistCaption();await refresh();toast('Caption saved.');});
