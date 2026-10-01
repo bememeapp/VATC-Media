@@ -293,3 +293,34 @@ def test_pale_background_touching_photo_edge_is_editable():
     mask,_=imaging.detect_photo_areas(original)
     assert mask.getpixel((210,110))==255
     assert mask.getpixel((210,90))==0
+
+
+@pytest.mark.parametrize("dash", ["-", "–", "—", "‑", "‒", "―", "−", "\u00ad"])
+def test_generated_captions_have_no_dashes_and_start_with_hook(dash):
+    from app.provider import format_caption
+    import unicodedata
+    title, caption = format_caption("Tiny body, absolutely zero fear 😭", f"Small bird {dash} big attitude.\n\nA well-known scene.")
+    assert caption.startswith(title + "\n\n")
+    assert "well known" in caption
+    assert "\n\n" in caption[len(title)+2:]
+    assert not any(unicodedata.category(c)=="Pd" or c in "\u00ad\u2212" for c in caption)
+
+
+def test_caption_hook_is_not_repeated_and_paragraphs_remain():
+    from app.provider import format_caption
+    title,caption=format_caption("**Tiny body, zero fear 😭**", "Tiny body, zero fear 😭\n\nOne tiny bird.\n\nAn enormous personality.")
+    assert caption=="Tiny body, zero fear 😭\n\nOne tiny bird.\n\nAn enormous personality."
+
+
+def test_caption_provider_includes_hook_in_copyable_caption(monkeypatch):
+    from app.provider import OpenAIProvider
+    provider=OpenAIProvider()
+    async def request(route,**kwargs):
+        instructions=kwargs["json"]["instructions"]
+        assert "Tiny body, absolutely zero fear" in instructions
+        assert "Never use hyphens" in instructions
+        payload={"title":"Tiny body — zero fear 😭", "caption":"Small bird, big energy.\n\nA well-known pose.", "review_note":"", "regions":[]}
+        return {"status":"completed","output":[{"content":[{"type":"output_text","text":json.dumps(payload)}]}]}
+    monkeypatch.setattr(provider,"request",request)
+    result=asyncio.run(provider.analyse(fixture_image(),True))
+    assert result["caption"]=="Tiny body, zero fear 😭\n\nSmall bird, big energy.\n\nA well known pose."
