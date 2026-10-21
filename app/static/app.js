@@ -2,6 +2,10 @@ const $ = id => document.getElementById(id);
 const busy = p => ['queued','analysing','editing'].includes(p.status);
 let batchId = new URLSearchParams(location.hash.slice(1)).get('batch') || localStorage.getItem('vatc-batch');
 let posts = [], filter = 'all', configured = false, uploading = false, selected = null, currentView = 'result';
+const guidelineDrafts = new Map();
+const guidelinesFor = p => guidelineDrafts.get(p.id) ?? p.caption_guidelines ?? "";
+const runBody = (p, mode) => JSON.stringify({mode, caption_guidelines:guidelinesFor(p)});
+$("pageName").oninput = () => {document.title = $("pageName").value.trim() ? `${$("pageName").value.trim()} · VATC Media` : "Post Studio · VATC Media";};
 let toastTimer, polling = false, queueing = false, switchingPost = false;
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const url = (p, kind) => `/api/batches/${p.batch}/posts/${p.id}/file/${kind}?v=${p.updated}`;
@@ -45,6 +49,10 @@ function status(p) {
   return ['Ready to generate',''];
 }
 function render() {
+  const focused = document.activeElement;
+  const editingGuidelines = focused?.matches('#grid textarea[data-guidelines]');
+  const editingId = editingGuidelines ? focused.dataset.guidelines : null;
+  const selection = editingGuidelines ? [focused.selectionStart, focused.selectionEnd] : null;
   const ready = posts.filter(p=>p.has_result && p.caption.trim() && p.status==='ready');
   const attention = posts.filter(p=>['failed','review'].includes(p.status));
   const active = posts.filter(busy);
@@ -61,8 +69,9 @@ function render() {
   $('emptyState').querySelector('p').innerHTML = posts.length ? 'Your posts will appear here as they progress.' : 'Upload your originals, generate the edits,<br>then download your images and captions.';
   $('grid').innerHTML = visible.map(p=>{
     const [label,cls] = status(p);
-    return `<article class="post-card"><button class="card-image" data-action="open" data-id="${p.id}" aria-label="Open ${escape(p.filename)}"><img loading="lazy" src="${url(p,p.has_result?'result':'thumb')}" alt="${escape(p.filename)}"><span class="status-pill ${cls}">${escape(label)}</span></button><div class="card-body"><div class="card-title">${escape(p.title || p.filename)}</div><div class="card-filename">${escape(p.filename)} · ${p.width} × ${p.height}</div><p class="card-caption">${escape(p.error || p.caption || 'Your refreshed image and caption will appear here.')}</p><div class="card-actions">${busy(p) ? '<button class="button small secondary" disabled>Processing…</button>' : p.status==='uploaded' ? `<button class="button small primary" data-action="generate" data-id="${p.id}" ${!configured?'disabled':''}>✧ Generate</button>` : `<button class="button small primary" data-action="regenerate" data-id="${p.id}" ${!configured?'disabled':''}>↻ Regenerate image</button>`}<button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="Remove ${escape(p.filename)}" ${busy(p)?'disabled':''}>×</button></div>${p.has_result ? `<div class="card-actions"><a class="button small secondary" href="${url(p,'result')}" download="${escape(p.filename.replace(/\.[^.]+$/,''))}-edited.png">↓ Image</a><button class="button small secondary" data-action="copy" data-id="${p.id}" ${!p.caption.trim()?'disabled':''}>Copy caption</button></div>` : ''}</div></article>`;
+    return `<article class="post-card"><button class="card-image" data-action="open" data-id="${p.id}" aria-label="Open ${escape(p.filename)}"><img loading="lazy" src="${url(p,p.has_result?'result':'thumb')}" alt="${escape(p.filename)}"><span class="status-pill ${cls}">${escape(label)}</span></button><div class="card-body"><div class="card-title">${escape(p.title || p.filename)}</div><div class="card-filename">${escape(p.filename)} · ${p.width} × ${p.height}</div><p class="card-caption">${escape(p.error || p.caption || 'Your refreshed image and caption will appear here.')}</p><label class="guidelines-label" for="guidelines-${p.id}">Caption guidelines <span>Optional</span></label><textarea class="guidelines-input" id="guidelines-${p.id}" data-guidelines="${p.id}" maxlength="1500" placeholder="e.g. Focus on Transformers and Optimus Prime." ${busy(p)?'disabled':''}>${escape(guidelinesFor(p))}</textarea><div class="card-actions">${busy(p) ? '<button class="button small secondary" disabled>Processing…</button>' : p.status==='uploaded' ? `<button class="button small primary" data-action="generate" data-id="${p.id}" ${!configured?'disabled':''}>✧ Generate</button>` : `<button class="button small primary" data-action="regenerate" data-id="${p.id}" ${!configured?'disabled':''}>↻ Regenerate image</button>`}<button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="Remove ${escape(p.filename)}" ${busy(p)?'disabled':''}>×</button></div>${p.has_result ? `<div class="card-actions"><a class="button small secondary" href="${url(p,'result')}" download="${escape(p.filename.replace(/\.[^.]+$/,''))}-edited.png">↓ Image</a><button class="button small secondary" data-action="copy" data-id="${p.id}" ${!p.caption.trim()?'disabled':''}>Copy caption</button></div>` : ''}</div></article>`;
   }).join('');
+  if (editingId) { const field = document.getElementById(`guidelines-${editingId}`); if(field && !field.disabled) {field.focus({preventScroll:true});field.setSelectionRange(...selection);} }
   if ($('editor').open) updatePostNavigation();
 }
 async function uploadFiles(fileList) {
@@ -102,18 +111,20 @@ $('generateAll').onclick = ()=>action(async()=>{
   const pending = posts.filter(p=>p.status==='uploaded');
   queueing = true; render();
   try {
-    for (const p of pending) await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:'all'})});
+    for (const p of pending) await api(endpoint(p,'/run'),{method:'POST',body:runBody(p,'all')});
     await refresh(); toast(`${pending.length} posts added to the queue. You can leave this tab and return using its link.`);
   } finally { queueing = false; render(); }
 });
 $('downloadAll').onclick = ()=>{location.href=`/api/batches/${batchId}/download`;};
+$('grid').oninput = e => {if(e.target.matches('textarea[data-guidelines]')) guidelineDrafts.set(e.target.dataset.guidelines,e.target.value);};
+$('captionGuidelines').oninput = () => {if(selected) {guidelineDrafts.set(selected.id,$('captionGuidelines').value);const card=document.getElementById(`guidelines-${selected.id}`);if(card)card.value=$('captionGuidelines').value;}};
 $('grid').onclick = e=>action(async()=>{
   const button = e.target.closest('[data-action]'); if(!button)return;
   const p = posts.find(p=>p.id===button.dataset.id); if(!p)return;
   if (button.dataset.action === 'open') await openEditor(p);
   if (button.dataset.action === 'copy') {await navigator.clipboard.writeText(p.caption);toast('Caption copied.');}
-  if (button.dataset.action === 'generate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:p.status==='failed'?'retry':'all'})});await refresh();}
-  if (button.dataset.action === 'regenerate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:JSON.stringify({mode:'image'})});await refresh();}
+  if (button.dataset.action === 'generate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:runBody(p,p.status==='failed'?'retry':'all')});await refresh();}
+  if (button.dataset.action === 'regenerate') {button.disabled=true;await api(endpoint(p,'/run'),{method:'POST',body:runBody(p,'image')});await refresh();}
   if (button.dataset.action === 'remove') {await api(endpoint(p),{method:'DELETE'});await refresh();}
 });
 async function loadImage(src) {
@@ -124,6 +135,7 @@ async function openEditor(p) {
   selected=p;
   $('editorTitle').textContent=p.title||p.filename;
   $('captionText').value=p.caption;
+  $('captionGuidelines').value=guidelinesFor(p);
   updateCharacterCount();
   $('reviewNote').textContent=p.error||p.note;
   $('reviewNote').hidden=!(p.error||p.note);
@@ -177,7 +189,7 @@ $('saveCaption').onclick=()=>action(async()=>{await persistCaption();await refre
 $('copyCaption').onclick=()=>action(async()=>{await navigator.clipboard.writeText($('captionText').value);toast('Caption copied.');});
 async function rerun(mode) {
   await persistCaption();
-  await api(endpoint(selected,'/run'),{method:'POST',body:JSON.stringify({mode})});
+  await api(endpoint(selected,'/run'),{method:'POST',body:runBody(selected,mode)});
   $('editor').close(); await refresh();toast(mode==='caption'?'Writing a fresh caption.':'Creating a fresh background.');
 }
 $('redoImage').onclick=()=>action(()=>rerun('image'));
