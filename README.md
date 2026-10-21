@@ -34,7 +34,8 @@ Batch links contain unpredictable identifiers. Keep the current batch URL to ret
 - Detection is conservative and can miss very pale or unusual panels. Review the original and result. Subjects within photos are preserved by the editing instruction, not guaranteed pixel-identical; the model can still change details.
 - The full post is proportionally resized only when needed, then padded to the model's size grid. Output of an unexpected size is rejected. Old cutout masks and cached edits are invalidated when regenerating.
 - The default image model is `gpt-image-2`, medium quality, with its always-on high input fidelity. Text uses `gpt-5-mini`. API model access requires a live test. ChatGPT's Instant label does not identify an identical API image-editing configuration.
-- Captions are instructed to avoid unsupported claims and attributed meme claims. There is no automated web fact-checking. Human review is still needed.
+- Captions open with a catchy hook, followed by 2 to 4 paragraphs of relevant facts about the featured show, movie, artist, event, person or other subject. Specific names and topic keywords belong naturally in the prose, with no dashes, hashtags or page promotion. New generations and Rewrite caption use this style; saved captions are not changed automatically.
+- Captions are instructed to avoid unsupported claims. There is no automated web fact-checking: uncertain current news is omitted in favour of established background facts. Human review is still needed.
 - Automated tests use a fake provider for the job pipeline and check protected-pixel integrity. Real OpenAI output, cost and hosting capacity require a separate live test with a configured API key.
 
 ## Temporary storage and queue
