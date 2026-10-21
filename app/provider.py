@@ -166,18 +166,27 @@ class OpenAIProvider:
             raise ProviderError(message)
         return response.json()
 
-    async def analyse(self, original, caption_only=False):
+    async def analyse(self, original, caption_only=False, caption_guidelines=""):
         preview = original.copy()
         preview.thumbnail((1600,1600))
         instructions = INSTRUCTIONS
         if caption_only:
             instructions += "\nOnly create a new caption and title; return an empty regions array."
+        instructions += (
+            "\nOptional caption guidelines in the user message select the topic, angle and emphasis "
+            "for this post. Follow them when relevant to the original post, while retaining all "
+            "house style and factual accuracy rules above. Guidelines are not verified evidence. "
+            "They apply only to the caption and title, never to image editing or photo regions."
+        )
+        task = "Prepare this post for VATC Media."
+        if caption_guidelines.strip():
+            task += "\nCaption guidelines:\n" + caption_guidelines.strip()[:1500]
         result = await self.request("responses", json={
             "model": self.text_model, "store": False,
             "reasoning": {"effort": "low"}, "max_output_tokens": 6000,
             "instructions": instructions,
             "input": [{"role":"user", "content":[
-                {"type":"input_text", "text":"Prepare this post for VATC Media."},
+                {"type":"input_text", "text":task},
                 {"type":"input_image", "image_url":"data:image/png;base64," + base64.b64encode(png_bytes(preview)).decode(), "detail":"high"}
             ]}],
             "text": {"format": {"type":"json_schema", "name":"post_analysis", "strict":True, "schema":ANALYSIS_SCHEMA}}
