@@ -98,7 +98,7 @@ async def process(post):
             post.update(regions=[], has_mask=False, has_result=False, layout_confirmed=False, pipeline=PIPELINE_VERSION)
         if mode == "caption" or not post.get("caption"):
             store.consume("text")
-            info = await provider.analyse(original, True)
+            info = await provider.analyse(original, True, caption_guidelines=post.get("caption_guidelines", ""))
             post.update(title=info["title"][:100], caption=info["caption"], note=info["review_note"][:1200])
             store.save(post)
         if mode == "caption":
@@ -289,6 +289,7 @@ async def upload(batch_id: str, request: Request):
 
 class Run(BaseModel):
     mode: str = Field(default="all", pattern="^(all|image|caption|retry)$")
+    caption_guidelines: str | None = Field(default=None, max_length=1500)
 
 
 @app.post("/api/batches/{batch_id}/posts/{post_id}/run")
@@ -297,6 +298,8 @@ async def run_post(batch_id: str, post_id: str, payload: Run):
     post = post_exists(batch_id,post_id)
     idle(post)
     mode = post.get("mode","all") if payload.mode == "retry" else payload.mode
+    if payload.caption_guidelines is not None:
+        post["caption_guidelines"] = payload.caption_guidelines.strip()
     if payload.mode == "image":
         folder = store.directory(post)
         for p in folder.glob("edited-*.png"):
