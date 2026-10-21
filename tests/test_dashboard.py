@@ -28,7 +28,8 @@ REGION={"x":100,"y":200,"w":800,"h":600,"background":"A quiet garden","confidenc
 class FakeProvider:
     configured = True
     def __init__(self): self.image_calls=0;self.text_calls=0
-    async def analyse(self, image, caption_only=False):
+    async def analyse(self, image, caption_only=False, caption_guidelines=""):
+        self.last_guidelines=caption_guidelines
         self.text_calls+=1
         return {"title":"A new setting", "caption":"A funny hook.\n\nA detailed caption about the original post.","review_note":"", "regions":[] if caption_only else [REGION]}
     async def edit(self, image, mask, background):
@@ -324,3 +325,41 @@ def test_caption_provider_includes_hook_in_copyable_caption(monkeypatch):
     monkeypatch.setattr(provider,"request",request)
     result=asyncio.run(provider.analyse(fixture_image(),True))
     assert result["caption"]=="Tiny body, zero fear 😭\n\nSmall bird, big energy.\n\nA well known pose."
+
+
+def test_guidelines_follow_post_through_generation_and_rewrite(client):
+    b,p=upload(client)
+    note="Focus on Transformers and Optimus Prime."
+    assert client.post(path(b,p,"/run"),json={"mode":"all","caption_guidelines":note}).status_code==200
+    result=execute()
+    assert result["status"]=="ready"
+    assert main.provider.last_guidelines==note
+    assert result["caption_guidelines"]==note
+    image_calls=main.provider.image_calls
+    assert client.post(path(b,p,"/run"),json={"mode":"caption"}).status_code==200
+    execute()
+    assert main.provider.last_guidelines==note
+    assert main.provider.image_calls==image_calls
+    assert client.post(path(b,p,"/run"),json={"mode":"caption","caption_guidelines":""}).status_code==200
+    execute()
+    assert main.provider.last_guidelines==""
+    assert client.post(path(b,p,"/run"),json={"caption_guidelines":"x"*1501}).status_code==422
+    b2,p2=upload(client)
+    client.post(path(b2,p2,"/run"),json={"mode":"caption"})
+    execute()
+    assert main.provider.last_guidelines==""
+
+
+def test_guidelines_reach_caption_provider_as_topic_direction(monkeypatch):
+    from app.provider import OpenAIProvider
+    provider=OpenAIProvider()
+    note="Focus on Transformers, not Captain America."
+    async def request(route,**kwargs):
+        payload=kwargs["json"]
+        assert note in payload["input"][0]["content"][0]["text"]
+        assert "Guidelines are not verified evidence" in payload["instructions"]
+        assert "Never use hyphens" in payload["instructions"]
+        result={"title":"A hero worth listening to", "caption":"The Transformers story.", "review_note":"", "regions":[]}
+        return {"status":"completed","output":[{"content":[{"type":"output_text","text":json.dumps(result)}]}]}
+    monkeypatch.setattr(provider,"request",request)
+    asyncio.run(provider.analyse(fixture_image(),True,caption_guidelines=note))
