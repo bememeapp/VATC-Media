@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import store
 from .imaging import PIPELINE_VERSION, build_edit_mask, composite_background, detect_photo_areas, prepare_edit, restore_edit, pixel_box, read_upload
-from .provider import OpenAIProvider, ProviderError
+from .provider import OpenAIProvider, ProviderError, strip_review_notes
 
 logger = logging.getLogger("vatc")
 provider = OpenAIProvider()
@@ -54,6 +54,12 @@ def post_exists(batch_id, post_id):
     post = store.get(post_id)
     if not post or post["batch"] != batch_id:
         raise HTTPException(404, "This post does not exist in this batch.")
+    return public_caption(post)
+
+
+def public_caption(post):
+    # Also protect copy/download of captions generated before the prompt was fixed.
+    post["caption"] = strip_review_notes(post.get("caption", ""))
     return post
 
 
@@ -99,7 +105,7 @@ async def process(post):
         if mode == "caption" or not post.get("caption"):
             store.consume("text")
             info = await provider.analyse(original, True, caption_guidelines=post.get("caption_guidelines", ""))
-            post.update(title=info["title"][:100], caption=info["caption"], note=info["review_note"][:1200])
+            post.update(title=info["title"][:100], caption=strip_review_notes(info["caption"]), note=info["review_note"][:1200])
             store.save(post)
         if mode == "caption":
             post.update(status="ready" if post.get("has_result") else "uploaded", error="")
@@ -250,7 +256,7 @@ def create_batch():
 def get_batch(batch_id: str):
     created = batch_exists(batch_id)
     with store.db() as c:
-        posts = [json.loads(r["data"]) for r in c.execute("SELECT data FROM posts WHERE batch=? ORDER BY created", (batch_id,))]
+        posts = [public_caption(json.loads(r["data"])) for r in c.execute("SELECT data FROM posts WHERE batch=? ORDER BY created", (batch_id,))]
     return {"id":batch_id,"expires":created+store.RETENTION,"posts":posts}
 
 
@@ -319,7 +325,7 @@ class Caption(BaseModel):
 async def caption(batch_id: str, post_id: str, payload: Caption):
     post = post_exists(batch_id,post_id)
     idle(post)
-    post.update(caption=payload.caption, approved=False)
+    post.update(caption=strip_review_notes(payload.caption), approved=False)
     store.save(post)
     return post
 
