@@ -313,6 +313,45 @@ def test_caption_hook_is_not_repeated_and_paragraphs_remain():
     assert caption=="Tiny body, zero fear 😭\n\nOne tiny bird.\n\nAn enormous personality."
 
 
+@pytest.mark.parametrize("footer", [
+    "Review note: The screenshot was not independently confirmed.",
+    "REVIEW NOTES:\nCheck the context.\n\nMore internal details.",
+    "**Review note:** Check the source.",
+    "### Review note\nCheck the source.",
+    "[Review note]: Check the source.",
+    "review_note: Check the source.",
+    "Editorial note: Check the source.",
+    "Verification note — Check the source.",
+])
+def test_review_note_footers_are_not_part_of_generated_caption(footer):
+    from app.provider import format_caption
+    title, caption = format_caption("A familiar face 😭", "A career in online video.\n\n" + footer)
+    assert caption == "A familiar face 😭\n\nA career in online video."
+
+
+def test_review_note_filter_preserves_ordinary_caption_content():
+    from app.provider import strip_review_notes
+    text = "This review deserves a second look.\n\nReview notes from fans shaped the film.\n\nNote: the character plays a musical note."
+    assert strip_review_notes(text) == text
+
+
+def test_existing_caption_notes_are_excluded_from_display_and_download(client):
+    b, p = upload(client)
+    client.post(path(b, p, "/run"), json={"mode":"all"})
+    result = execute()
+    clean = "A familiar face 😭\n\nA career in online video."
+    result.update(caption=clean + "\n\nReview note: Check the screenshot context.", note="Separate internal note")
+    store.save(result)
+    displayed = client.get(f"/api/batches/{b}").json()["posts"][0]
+    assert displayed["caption"] == clean
+    assert displayed["note"] == "Separate internal note"
+    with zipfile.ZipFile(io.BytesIO(client.get(f"/api/batches/{b}/download").content)) as z:
+        assert z.read("001-example.txt").decode() == clean
+    saved = client.patch(path(b, p, "/caption"), json={"caption":result["caption"]}).json()
+    assert saved["caption"] == clean
+    assert store.get(p["id"])["caption"] == clean
+
+
 def test_caption_provider_includes_hook_in_copyable_caption(monkeypatch):
     from app.provider import OpenAIProvider
     provider=OpenAIProvider()
