@@ -12,12 +12,14 @@
     <a class="brand" href="/" aria-label="VATC Media home"><span class="brandmark">v<span>↗</span></span><span>VATC<span class="brand-sub">MEDIA</span></span></a>
     <div class="workspace-label">CREATIVE WORKSPACE</div>
     <button class="nav-item active" id="studioNav"><span class="nav-icon">▦</span> Post studio <span class="nav-dot"></span></button>
+    <button class="nav-item" id="captionNav" aria-label="Caption writer"><span class="nav-icon">✎</span> Caption writer</button>
     <button class="nav-item" id="styleNav"><span class="nav-icon">☷</span> House style</button>
     <div class="sidebar-bottom"><span class="team-avatar">V</span><div>One team. One style.<small>VATC Media workspace</small></div></div>
   </aside>
   <div class="shell">
-    <header class="topbar"><span class="breadcrumb">Workspace <span>/</span> <strong>Post studio</strong></span><label class="page-label"><span class="sr-only">Page name for this tab</span><input id="pageName" type="text" maxlength="80" autocomplete="off" placeholder="Page name for this tab"></label><div class="top-actions"><span class="connection" id="connection"><i></i> Connecting</span><button id="newBatch" class="button small secondary">＋ New batch</button></div></header>
+    <header class="topbar"><span class="breadcrumb">Workspace <span>/</span> <strong id="currentSection">Post studio</strong></span><label class="page-label"><span class="sr-only">Page name for this tab</span><input id="pageName" type="text" maxlength="80" autocomplete="off" placeholder="Page name for this tab"></label><div class="top-actions"><span class="connection" id="connection"><i></i> Connecting</span><button id="newBatch" class="button small secondary">＋ New batch</button></div></header>
     <main>
+      <section id="studioView">
       <div class="page-heading"><div><span class="eyebrow">MAKE IT YOUR NEXT POST</span><h1>Post studio<span class="heading-dot">.</span></h1><p>A fresh background. A great caption. Same original idea.</p></div><div class="batch-tag" id="batchTag">NEW BATCH</div></div>
       <div id="setupNotice" class="notice" hidden>Uploads and previews are ready. To enable generation, add <strong>OPENAI_API_KEY</strong> in Render’s Environment settings.</div>
       <section class="upload-row">
@@ -35,6 +37,32 @@
         <div class="filter-row"><div class="filters" role="group" aria-label="Filter posts"><button class="filter selected" data-filter="all">All posts <span id="allCount">0</span></button><button class="filter" data-filter="ready">Ready <span id="readyCount">0</span></button></div><span id="expiry" class="expiry">Temporary workspace · files expire after 24h</span></div>
         <div id="grid" class="post-grid"></div>
         <div class="empty-state" id="emptyState"><div class="empty-illustration"><div class="paper back"></div><div class="paper front"><span>✳</span><i></i><i></i></div><span class="empty-plus">＋</span></div><h3>Your next batch is a drop away</h3><p>Upload your originals, generate the edits,<br>then download your images and captions.</p></div>
+      </section>
+      </section>
+      <section id="captionWriterView" aria-labelledby="writerHeading" hidden>
+        <div class="page-heading"><div><span class="eyebrow">WORDS THAT MAKE IT WORTH SHARING</span><h1 id="writerHeading">Caption writer<span class="heading-dot">.</span></h1><p>Paste a caption. Give it a fresh voice. No image needed.</p></div></div>
+        <div class="writer-grid">
+          <section class="writer-card" aria-labelledby="writerSourceHeading">
+            <h2 id="writerSourceHeading">Start with a caption</h2>
+            <label class="guidelines-label" for="writerSource">Original caption</label>
+            <textarea id="writerSource" maxlength="10000" placeholder="Paste the caption you want to rewrite here…"></textarea>
+            <label class="guidelines-label" for="writerGuidelines">Caption guidelines <span>Optional</span></label>
+            <textarea id="writerGuidelines" class="guidelines-input" maxlength="1500" placeholder="e.g. Focus on the movie and its main character, or make the opening more playful."></textarea>
+            <div class="writer-actions"><button id="writerGenerate" class="button primary" disabled>✧ Generate caption</button><button id="writerClear" class="button secondary">Clear</button></div>
+            <p class="guidelines-help">Your draft and versions stay in this tab until you refresh or close it.</p>
+          </section>
+          <section class="writer-card" aria-labelledby="writerOutputHeading">
+            <div class="caption-title"><h2 id="writerOutputHeading">Your new caption</h2><span class="pill">ENGLISH</span></div>
+            <p class="caption-help">A catchy opening, useful context and the VATC house style. Edit any wording below.</p>
+            <label class="guidelines-label" for="writerVersion">Generated versions</label>
+            <select id="writerVersion" disabled><option>No versions yet</option></select>
+            <label class="sr-only" for="writerOutput">Edit generated caption</label>
+            <textarea id="writerOutput" maxlength="2200" placeholder="Your new caption will appear here."></textarea>
+            <div class="caption-meta"><span id="writerCount">0 / 2,200</span></div>
+            <div class="writer-actions"><button id="writerCopy" class="button primary" disabled>Copy caption</button><button id="writerRegenerate" class="button secondary" disabled>↻ Regenerate</button><button id="writerDownload" class="button secondary" disabled>↓ Text</button></div>
+          </section>
+        </div>
+        <p id="writerStatus" class="writer-status" role="status" aria-live="polite"></p>
       </section>
       <footer><span><i class="green-dot"></i> Made for every VATC Media page</span><span>Generate → Download → Post</span></footer>
     </main>
