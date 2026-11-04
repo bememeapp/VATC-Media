@@ -198,6 +198,7 @@ async def janitor():
 @asynccontextmanager
 async def lifespan(app):
     store.initialize()
+    app.state.caption_writer_lock = asyncio.Lock()
     tasks = [asyncio.create_task(worker()) for _ in range(max(1,min(4,int(os.getenv("WORKER_CONCURRENCY","2")))))]
     tasks.append(asyncio.create_task(janitor()))
     yield
@@ -238,6 +239,34 @@ def health():
 @app.get("/api/config")
 def config():
     return {"configured":provider.configured, "retention_hours":store.RETENTION//3600, "max_file_mb":12}
+
+
+class CaptionRewrite(BaseModel):
+    source_caption: str = Field(min_length=1, max_length=10000)
+    caption_guidelines: str = Field(default="", max_length=1500)
+
+
+@app.post("/api/captions/rewrite")
+async def rewrite_text_caption(payload: CaptionRewrite):
+    require_provider()
+    source = payload.source_caption.strip()
+    if not source:
+        raise HTTPException(422, "Paste a caption to rewrite first.")
+    lock = app.state.caption_writer_lock
+    if lock.locked():
+        raise HTTPException(429, "Another caption is being written. Please try again shortly.")
+    async with lock:
+        try:
+            store.consume("text")
+        except ValueError as exc:
+            raise HTTPException(429, str(exc)) from None
+        try:
+            info = await provider.analyse(None, True,
+                caption_guidelines=payload.caption_guidelines.strip(), source_caption=source)
+        except ProviderError as exc:
+            raise HTTPException(502, str(exc)) from None
+        # Return only public copy; do not create an image, batch or stored draft.
+        return {"title":info["title"], "caption":strip_review_notes(info["caption"])}
 
 
 @app.post("/api/batches")
