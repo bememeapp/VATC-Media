@@ -402,3 +402,92 @@ def test_guidelines_reach_caption_provider_as_topic_direction(monkeypatch):
         return {"status":"completed","output":[{"content":[{"type":"output_text","text":json.dumps(result)}]}]}
     monkeypatch.setattr(provider,"request",request)
     asyncio.run(provider.analyse(fixture_image(),True,caption_guidelines=note))
+
+
+@pytest.mark.parametrize("draw,mode", [(0.0,"SHARING"), (0.499,"SHARING"), (0.5,"STANDARD"), (0.999,"STANDARD")])
+def test_caption_opening_modes_keep_relevance_and_house_style(monkeypatch, draw, mode):
+    from app import provider as module
+    provider = module.OpenAIProvider()
+    monkeypatch.setattr(module.random, "random", lambda: draw)
+    calls = []
+    async def request(route, **kwargs):
+        calls.append(route)
+        instructions = kwargs["json"]["instructions"]
+        assert f"OPENING MODE: {mode}." in instructions
+        assert instructions.count("OPENING MODE:") == 1
+        assert "When sharing does not fit naturally, use a normal catchy hook" in instructions
+        assert "Keep any sharing invitation in the first line only" in instructions
+        assert "Never use hyphens" in instructions
+        assert 'Do not add a "Review note:" section' in instructions
+        assert "Focus on Shrek" in kwargs["json"]["input"][0]["content"][0]["text"]
+        hook = "Send this to your Shrek obsessed friend 😂" if mode == "SHARING" else "Somebody once told me 😂"
+        result = {"title":hook, "caption":"Shrek is an animated comedy about an ogre.", "review_note":"", "regions":[]}
+        return {"status":"completed", "output":[{"content":[{"type":"output_text", "text":json.dumps(result)}]}]}
+    monkeypatch.setattr(provider, "request", request)
+    result = asyncio.run(provider.analyse(fixture_image(), True, caption_guidelines="Focus on Shrek"))
+    assert result["caption"].startswith(result["title"] + "\n\n")
+    assert calls == ["responses"]
+
+
+def test_text_writer_uses_only_text_and_applies_house_style(monkeypatch):
+    from app.provider import OpenAIProvider
+    provider = OpenAIProvider()
+    async def request(route, **kwargs):
+        assert route == "responses"
+        payload = kwargs["json"]
+        assert payload["store"] is False
+        assert all(c["type"] == "input_text" for c in payload["input"][0]["content"])
+        assert "Source caption:\nAn ogre named Shrek." == payload["input"][0]["content"][1]["text"]
+        assert "Focus on the movie" in payload["input"][0]["content"][0]["text"]
+        assert "text-only caption rewrite" in payload["instructions"]
+        assert "OPENING MODE:" in payload["instructions"]
+        data = {"title":"Ogre sized energy 😂", "caption":"Shrek is an animated comedy.\n\nReview note: Internal only.", "regions":[], "review_note":"Internal only."}
+        return {"status":"completed","output":[{"content":[{"type":"output_text","text":json.dumps(data)}]}]}
+    monkeypatch.setattr(provider, "request", request)
+    result = asyncio.run(provider.analyse(None, True, "Focus on the movie", source_caption="An ogre named Shrek."))
+    assert result["caption"] == "Ogre sized energy 😂\n\nShrek is an animated comedy."
+
+
+def test_text_writer_endpoint_no_images_or_saved_posts(client, monkeypatch):
+    seen = []
+    async def analyse(original, caption_only=False, caption_guidelines="", source_caption=None):
+        seen.append((original, caption_only, caption_guidelines, source_caption))
+        return {"title":"A hook", "caption":"A hook\n\nPublic caption.\n\nReview note: Private.", "review_note":"Private", "regions":[]}
+    monkeypatch.setattr(main.provider, "analyse", analyse)
+    response = client.post("/api/captions/rewrite", json={"source_caption":" Original caption ","caption_guidelines":" Focus on Shrek "})
+    assert response.status_code == 200
+    assert response.json() == {"title":"A hook","caption":"A hook\n\nPublic caption."}
+    assert seen == [(None, True, "Focus on Shrek", "Original caption")]
+    assert main.provider.image_calls == 0
+    with store.db() as c:
+        assert c.execute("SELECT count(*) FROM posts").fetchone()[0] == 0
+        assert c.execute("SELECT count(*) FROM batches").fetchone()[0] == 0
+        assert [tuple(r) for r in c.execute("SELECT kind,count FROM usage")] == [("text",1)]
+
+
+@pytest.mark.parametrize("payload", [{"source_caption":" "},{"source_caption":""},{"source_caption":"x"*10001},{"source_caption":"ok","caption_guidelines":"x"*1501}])
+def test_text_writer_rejects_invalid_input_without_charging(client, payload):
+    assert client.post("/api/captions/rewrite",json=payload).status_code == 422
+    with store.db() as c:
+        assert c.execute("SELECT count(*) FROM usage").fetchone()[0] == 0
+
+
+def test_text_writer_respects_shared_limit_and_recovers_from_provider_failure(client, monkeypatch):
+    from app.provider import ProviderError
+    monkeypatch.setenv("MAX_DAILY_TEXT_CALLS", "1")
+    async def fail(*args, **kwargs):
+        raise ProviderError("The AI request timed out. Check usage before retrying.")
+    monkeypatch.setattr(main.provider, "analyse", fail)
+    payload = {"source_caption":"A caption about Shrek"}
+    assert client.post("/api/captions/rewrite",json=payload).status_code == 502
+    assert not main.app.state.caption_writer_lock.locked()
+    assert client.post("/api/captions/rewrite",json=payload).status_code == 429
+
+
+def test_text_writer_rejects_overlapping_requests(client):
+    class BusyLock:
+        def locked(self): return True
+    main.app.state.caption_writer_lock = BusyLock()
+    assert client.post("/api/captions/rewrite",json={"source_caption":"A caption"}).status_code == 429
+    with store.db() as c:
+        assert c.execute("SELECT count(*) FROM usage").fetchone()[0] == 0
