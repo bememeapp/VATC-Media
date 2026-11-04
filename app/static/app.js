@@ -103,7 +103,16 @@ for (const name of ['dragenter','dragover']) $('dropzone').addEventListener(name
 for (const name of ['dragleave','drop']) $('dropzone').addEventListener(name,e=>{e.preventDefault();$('dropzone').classList.remove('dragover');});
 $('dropzone').addEventListener('drop',e=>action(()=>uploadFiles(e.dataTransfer.files)));
 $('newBatch').onclick = ()=>action(async()=>{batchId=null;posts=[];filter='all';await ensureBatch();render();toast('New batch ready. Earlier batch links remain active until expiry.');});
-$('studioNav').onclick = ()=>window.scrollTo({top:0,behavior:'smooth'});
+function showSection(section) {
+  const writer = section === 'caption';
+  $('studioView').hidden = writer; $('captionWriterView').hidden = !writer;
+  $('studioNav').classList.toggle('active',!writer); $('captionNav').classList.toggle('active',writer);
+  $('currentSection').textContent = writer ? 'Caption writer' : 'Post studio';
+  $('newBatch').hidden = writer;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+$('studioNav').onclick = ()=>showSection('studio');
+$('captionNav').onclick = ()=>showSection('caption');
 for (const id of ['styleNav','recipeDetails']) $(id).onclick = ()=>$('styleDialog').showModal();
 $('closeStyle').onclick = ()=>$('styleDialog').close();
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('selected',x===b));render();});
@@ -207,7 +216,60 @@ async function init(){
   $('connection').classList.toggle('off',!configured);$('setupNotice').hidden=configured;
   $('expiry').textContent=`Temporary workspace · files expire after ${config.retention_hours}h`;
   if(batchId){try{await refresh();history.replaceState(null,'',`#batch=${batchId}`);}catch(e){batchId=null;posts=[];localStorage.removeItem('vatc-batch');history.replaceState(null,'',location.pathname);toast(e.message);}}
-  render();
+  render(); updateWriter();
 }
 action(init);
 setInterval(()=>{if(batchId&&!document.hidden)refresh().catch(()=>{});},3500);
+
+// Caption drafts are kept in this tab only, independent of image batches.
+let writerBusy = false, writerVersions = [], writerIndex = -1;
+function updateWriter() {
+  const hasSource = !!$('writerSource').value.trim(), hasOutput = !!$('writerOutput').value.trim();
+  $('writerGenerate').disabled = writerBusy || !configured || !hasSource;
+  $('writerRegenerate').disabled = writerBusy || !configured || !hasSource || !writerVersions.length;
+  $('writerClear').disabled = writerBusy;
+  $('writerSource').disabled = $('writerGuidelines').disabled = writerBusy;
+  $('writerOutput').disabled = writerBusy;
+  $('writerVersion').disabled = writerBusy || !writerVersions.length;
+  $('writerCopy').disabled = $('writerDownload').disabled = writerBusy || !hasOutput;
+  $('writerGenerate').textContent = writerBusy ? 'Writing caption…' : '✧ Generate caption';
+  $('writerCount').textContent = `${$('writerOutput').value.length.toLocaleString()} / 2,200`;
+}
+function rememberWriterEdit() {
+  if (writerIndex >= 0) writerVersions[writerIndex] = $('writerOutput').value;
+}
+$('writerSource').oninput = updateWriter;
+$('writerOutput').oninput = ()=>{rememberWriterEdit();updateWriter();};
+$('writerVersion').onchange = ()=>{
+  writerIndex = Number($('writerVersion').value);
+  $('writerOutput').value = writerVersions[writerIndex]; updateWriter();
+};
+async function writeCaption() {
+  if(writerBusy || !configured || !$('writerSource').value.trim())return;
+  rememberWriterEdit(); writerBusy = true; updateWriter();
+  $('writerStatus').textContent = 'Writing a fresh caption. You can switch tabs within the studio while it finishes.';
+  try {
+    const result = await api('/api/captions/rewrite',{method:'POST',body:JSON.stringify({
+      source_caption:$('writerSource').value, caption_guidelines:$('writerGuidelines').value
+    })});
+    writerVersions.push(result.caption); writerIndex = writerVersions.length - 1;
+    $('writerVersion').replaceChildren(...writerVersions.map((_,i)=>new Option(`Version ${i+1}`,String(i))));
+    $('writerVersion').value = String(writerIndex); $('writerOutput').value = result.caption;
+    $('writerStatus').textContent = 'Caption ready. Edit, copy or try another version.';
+  } catch(error) {
+    $('writerStatus').textContent = error.message; // Keep the source and any previous result on failure.
+  } finally {writerBusy = false; updateWriter();}
+}
+$('writerGenerate').onclick = $('writerRegenerate').onclick = writeCaption;
+$('writerCopy').onclick = ()=>action(async()=>{await navigator.clipboard.writeText($('writerOutput').value);toast('Caption copied.');});
+$('writerDownload').onclick = ()=>{
+  const link = document.createElement('a'), blob = URL.createObjectURL(new Blob([$('writerOutput').value],{type:'text/plain;charset=utf-8'}));
+  link.href = blob; link.download = 'vatc-caption.txt'; link.click(); setTimeout(()=>URL.revokeObjectURL(blob),1000);
+};
+$('writerClear').onclick = ()=>{
+  if(writerBusy)return;
+  $('writerSource').value = $('writerGuidelines').value = $('writerOutput').value = '';
+  writerVersions = []; writerIndex = -1;
+  $('writerVersion').replaceChildren(new Option('No versions yet',''));
+  $('writerStatus').textContent = ''; updateWriter(); $('writerSource').focus();
+};
