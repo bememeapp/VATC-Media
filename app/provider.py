@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import random
 import re
 import os
 import unicodedata
@@ -40,6 +41,18 @@ Style examples only, never reuse them unless they actually fit the post:
 "Imagine your secret identity being hidden in plain sight 😭❓"
 Vary the openings; do not start every caption with Imagine. Avoid generic clickbait or forced requests
 for likes, follows or comments. Match the actual joke and subject.
+Follow the opening mode supplied below. A sharing opening invites the reader to send the post to
+a specific, relevant recipient: a friend, partner, sibling, teammate, fellow fan or someone with a
+recognizable habit or interest connected to this exact post. Make the reason to send it clear.
+Keep it simple and conversational, often just "Send this to someone who..." plus a relevant habit.
+Style examples only: "Send this to someone who always wears makeup 😂",
+"Send this to the friend who quotes every line of Shrek 😂" or
+"Send this to your sibling, you both know which one of you this is 😭".
+Use that style only when the post actually supports it. Vary the wording and recipient, never
+add a generic "share with your friends" to every post. Do not force sharing for sensitive, tragic
+or otherwise unsuitable content. When sharing does not fit naturally, use a normal catchy hook.
+Keep any sharing invitation in the first line only. The body remains informative and subject focused,
+without another sharing request, tagging prompt, promotional outro or engagement instructions.
 CAPTION: the longer body ONLY, usually 2 to 4 informative, readable paragraphs. Do not repeat the
 title in this field. The app places the title above it, separated by a blank line.
 Choose the main subject of the post, or a clearly relevant element, and write about that subject.
@@ -188,6 +201,18 @@ class OpenAIProvider:
         preview = original.copy()
         preview.thumbnail((1600,1600))
         instructions = INSTRUCTIONS
+        # About half of caption requests try a sharing hook; relevance takes priority.
+        if random.random() < 0.5:
+            instructions += (
+                "\nOPENING MODE: SHARING. Try a natural, post-specific invitation to send this post "
+                "to someone who would relate to it. If no clear relevant recipient or reason fits, "
+                "use a normal catchy hook instead. Never force a sharing request."
+            )
+        else:
+            instructions += (
+                "\nOPENING MODE: STANDARD. Write a normal catchy hook about this post. "
+                "Do not ask the reader to share, send, tag or forward it in this caption."
+            )
         if caption_only:
             instructions += "\nOnly create a new caption and title; return an empty regions array."
         instructions += (
