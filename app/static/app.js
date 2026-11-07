@@ -197,6 +197,7 @@ $('closeEditor').onclick=()=>action(async()=>{await persistCaption();$('editor')
 $('editor').addEventListener('cancel',e=>{e.preventDefault();$('closeEditor').click();});
 $('saveCaption').onclick=()=>action(async()=>{await persistCaption();await refresh();toast('Caption saved.');});
 $('copyCaption').onclick=()=>action(async()=>{await navigator.clipboard.writeText($('captionText').value);toast('Caption copied.');});
+$('copyReviewImageAddress').onclick=()=>action(async()=>{await navigator.clipboard.writeText($('reviewImage').src);toast('Image address copied.');});
 async function rerun(mode) {
   await persistCaption();
   await api(endpoint(selected,'/run'),{method:'POST',body:runBody(selected,mode)});
